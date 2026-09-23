@@ -13,9 +13,18 @@ ROOT = Path(__file__).resolve().parents[2]
 HOST = ROOT / ".build/debug/termex-host"
 CAPTURE = ROOT / "probes/ghostty/key_capture.py"
 NEW = 'tell application id "com.mitchellh.ghostty" to get id of (new window)'
+NEW_TAB = '''on run argv
+set wid to item 1 of argv
+tell application id "com.mitchellh.ghostty" to get id of (new tab in (first window whose id is wid))
+end run'''
 CLOSE = '''on run argv
 set wid to item 1 of argv
 tell application id "com.mitchellh.ghostty" to close window (first window whose id is wid)
+end run'''
+CLOSE_TAB = '''on run argv
+set wid to item 1 of argv
+set tid to item 2 of argv
+tell application id "com.mitchellh.ghostty" to close tab (first tab of (first window whose id is wid) whose id is tid)
 end run'''
 INPUT = '''on run argv
 set wid to item 1 of argv
@@ -174,6 +183,37 @@ with tempfile.TemporaryDirectory(prefix="termex-keys-") as temporary:
         stale = subprocess.run([HOST, "--resolve-ghostty", split_row["appInstanceID"],
                                 split_row["windowID"], split_row["tabID"], split], capture_output=True, timeout=8)
         assert stale.returncode != 0 and not stale.stdout, "closed split resolved to another surface"
+
+        tab_id = ae(NEW_TAB, wid)
+        time.sleep(0.4)
+        new_tab = {sid: row for sid, row in surfaces(wid).items() if row["tabID"] == tab_id}
+        assert len(new_tab) == 1 and primary in surfaces(wid), "new tab not distinct from primary"
+        tab_surface, tab_row = next(iter(new_tab.items()))
+        tab_output = Path(temporary) / "tab.jsonl"
+        tab_command = f"python3 -u {shlex.quote(str(CAPTURE))} {shlex.quote(str(tab_output))} 5"
+        ae(INPUT, wid, tab_surface, tab_command)
+        ae(KEY, wid, tab_surface, "enter", "", "press")
+        for _ in range(40):
+            if tab_output.exists():
+                break
+            time.sleep(0.1)
+        assert tab_output.exists(), "tab raw capture did not start"
+        original_before, tab_before = captured(output), captured(tab_output)
+        ae(KEY, wid, primary, "tab", "", "press")
+        time.sleep(0.2)
+        assert captured(output)[len(original_before):] == ["09"] and captured(tab_output) == tab_before
+        original_before, tab_before = captured(output), captured(tab_output)
+        ae(KEY, wid, tab_surface, "tab", "", "press")
+        time.sleep(0.2)
+        assert captured(tab_output)[len(tab_before):] == ["09"] and captured(output) == original_before
+        print(json.dumps({"inactive_tab_routing": "PASS", "neighbor_tab_untouched": "PASS"}))
+        time.sleep(5)
+        ae(CLOSE_TAB, wid, tab_id)
+        time.sleep(0.4)
+        assert set(surfaces(wid)) == {primary}, "closing test tab changed primary"
+        stale = subprocess.run([HOST, "--resolve-ghostty", tab_row["appInstanceID"],
+                                tab_row["windowID"], tab_id, tab_surface], capture_output=True, timeout=8)
+        assert stale.returncode != 0 and not stale.stdout, "closed tab resolved to another surface"
     finally:
         ae(CLOSE, wid)
         for _ in range(40):

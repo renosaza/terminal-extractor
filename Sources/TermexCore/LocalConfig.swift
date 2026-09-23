@@ -1,21 +1,21 @@
 import Darwin
 import Foundation
 
-public struct LocalConfig: Codable, Equatable {
-    public enum TerminalApp: String, Codable { case terminal, ghostty }
-    public enum AttachPolicy: String, Codable { case existing, new, ask }
-    public enum Backend: String, Codable { case managed_tmux, native }
-    public enum Representation: String, Codable { case compact, exact }
-    public enum Compressor: String, Codable { case builtin }
+public struct LocalConfig: Codable, Equatable, Sendable {
+    public enum TerminalApp: String, Codable, Sendable { case terminal, ghostty }
+    public enum AttachPolicy: String, Codable, Sendable { case existing, new, ask }
+    public enum Backend: String, Codable, Sendable { case managed_tmux, native }
+    public enum Representation: String, Codable, Sendable { case compact, exact }
+    public enum Compressor: String, Codable, Sendable { case builtin }
 
-    public struct Recording: Codable, Equatable {
+    public struct Recording: Codable, Equatable, Sendable {
         public var consentRequired = true
         public var sessionLimitBytes = 268_435_456
         public var totalLimitBytes = 2_147_483_648
         public var retentionDays = 7
     }
 
-    public struct Output: Codable, Equatable {
+    public struct Output: Codable, Equatable, Sendable {
         public var defaultRepresentation: Representation = .compact
         public var targetEstimatedTokens = 4_000
         public var hardMaxBytes = 65_536
@@ -23,7 +23,7 @@ public struct LocalConfig: Codable, Equatable {
         public var headroomEnabled = false
     }
 
-    public struct Execution: Codable, Equatable {
+    public struct Execution: Codable, Equatable, Sendable {
         public var defaultWaitMs = 1_000
         public var maxWaitMs = 20_000
         public var busyQueueEnabled = false

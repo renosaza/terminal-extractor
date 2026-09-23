@@ -118,7 +118,8 @@ public enum LocalIPC {
             let remaining = Int32(min((deadline - now) / 1_000_000 + 1, 5_000))
             let result = poll(&descriptor, 1, remaining)
             if result < 0 && errno == EINTR { continue }
-            guard result > 0 else { throw result == 0 ? Failure.timedOut : Failure.system(errno) }
+            if result == 0 { continue }
+            guard result > 0 else { throw Failure.system(errno) }
             guard descriptor.revents & events != 0 else { throw Failure.disconnected }
             return
         }
@@ -139,8 +140,9 @@ public enum LocalIPC {
         return data
     }
 
-    public static func readFrame(_ fd: Int32) throws -> Data {
-        let deadline = DispatchTime.now().uptimeNanoseconds + 5_000_000_000
+    public static func readFrame(_ fd: Int32, timeoutSeconds: UInt64 = 5) throws -> Data {
+        guard (1...120).contains(timeoutSeconds) else { throw Failure.invalidFrame }
+        let deadline = DispatchTime.now().uptimeNanoseconds + timeoutSeconds * 1_000_000_000
         let header = try readExact(fd, count: 4, by: deadline)
         let length = header.reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
         guard length > 0 && length <= maxFrame else { throw Failure.invalidFrame }
