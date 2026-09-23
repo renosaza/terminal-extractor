@@ -16,6 +16,8 @@ status: draft
 
 Для локальной проверки Ghostty discovery: `swift build`, `.build/debug/termex-host --list-ghostty`, `python3 Tests/integration/ghostty_discovery.py`. Список содержит IDs и названия **всех** открытых Ghostty surfaces и предназначен для локального пользователя; MCP/IPC его не возвращают. `.build/debug/termex-host --resolve-ghostty <app-instance-id> <window-id> <tab-id> <surface-id>` перепроверяет выбранную строку и отклоняет закрытую цель. Эти команды не выдают grant и не подключают session.
 
+Аналогично для Terminal.app: `.build/debug/termex-host --list-terminal`, `python3 Tests/integration/terminal_discovery.py`, `.build/debug/termex-host --resolve-terminal <app-instance-id> <window-id> <tty>`. Если Terminal.app не запущен, список пуст и приложение не запускается. TTY может переиспользоваться: `resolve` — локальная диагностика, не право на read/input и не устойчивый session binding.
+
 Будущие области кода: session-registry, adapters/terminal-app, adapters/ghostty, adapters/tmux, shell-integration, journal, compression и host-ui. Это план модулей, не существующее продуктовое дерево.
 
 ## Документация
