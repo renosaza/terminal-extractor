@@ -4,7 +4,7 @@ status: draft
 ---
 # Архитектура и стек
 
-Это проект архитектуры, не описание существующего кода. Требования: [PRD](../product/prd.md). Решение по стеку: [TE-ADR-002](decisions/TE-ADR-002-stack.md).
+Это проект архитектуры; из схемы ниже реализована только CLI foundation host/gateway с private Unix socket и локальными настройками, без session control. Требования: [PRD](../product/prd.md). Решение по стеку: [TE-ADR-002](decisions/TE-ADR-002-stack.md).
 
 ## Слои
 

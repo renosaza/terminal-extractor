@@ -2,7 +2,7 @@
 id: TE-E02
 type: epic
 status: draft
-task_status: backlog
+task_status: active
 scope: host-and-registry
 ---
 # Host, настройки и идентичность сессий
@@ -22,5 +22,9 @@ TE-C03, TE-C06, TE-C07. Без root/cloud/web dashboard и выдуманных 
 ## Задачи
 
 [TE-T005](../tasks/TE-T005.md), [TE-T006](../tasks/TE-T006.md), [TE-T007](../tasks/TE-T007.md), [TE-T008](../tasks/TE-T008.md).
+
+## Текущее состояние
+
+TE-T005..008 начаты после проверок SDK/tmux в TE-E01. Product SwiftPM package содержит отдельные CLI host и MCP gateway с private Unix IPC и проверкой peer UID, локальный versioned config и read-only `terminal_capabilities`. Host имеет локальные Ghostty и Terminal.app discovery diagnostics с проверкой выбранной строки. Grants, persistent registry и GUI host ещё не реализованы. Это foundation, не готовый terminal control.
 
 [Архитектура](../../architecture/README.md), [настройки](../../guides/configuration.md).

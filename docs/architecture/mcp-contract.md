@@ -45,6 +45,8 @@ Mutation context: `request_id` длиной 1..128, `session_id`, `generation`; 
 | terminal_close | TargetRef, request_id; scope=session или view, explicit local close grant | Отдельный lifecycle result; не вызывает kill-server |
 | terminal_log_export | TargetRef; range, format=text/jsonl; bounded local policy | Opaque export/content ref и manifest; произвольный output path запрещён |
 
+Пока реализована только foundation-версия `terminal_capabilities`: она возвращает выбранные `terminal_app`, `attach_policy`, `new_session_backend`, `runtime=foundation` и `terminal_access=false`. Версии приложений и per-session capabilities появятся с adapters/registry; текущий ответ не служит разрешением на attach/input.
+
 Read tools не должны менять clipboard без объявленного opt-in capability. Screen read через native Ghostty export имеет side effect; его annotation и description должны честно отражать это. Read/write policy различает content-read и clipboard side effect.
 
 При нескольких targets `terminal_list` выдаёт отдельную строку для каждой доступной вкладки Terminal.app и каждой surface Ghostty вместе с app/window/tab/surface metadata для выбора человеком. Локально подтверждённый opaque handle выбранной строки передаётся в `terminal_attach`; title и порядковый номер служат только для отображения. Отсутствующий, неоднозначный или устаревший выбор — ошибка без fallback на focused/первый target.
