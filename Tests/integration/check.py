@@ -37,6 +37,14 @@ def exchange(path, payload):
         return json.loads(exact(connection, size))
 
 
+def stop(path):
+    with socket.socket(socket.AF_UNIX) as connection:
+        connection.settimeout(5)
+        connection.connect(path + ".stop")
+        size = struct.unpack("!I", exact(connection, 4))[0]
+        return json.loads(exact(connection, size))
+
+
 def rejected(path, header, body=b""):
     with socket.socket(socket.AF_UNIX) as connection:
         connection.settimeout(5)
@@ -102,13 +110,16 @@ with tempfile.TemporaryDirectory(prefix="termex-ipc-") as temporary:
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         for _ in range(100):
-            if Path(path).exists():
+            if Path(path).exists() and Path(path + ".stop").exists():
                 break
             assert host.poll() is None, host.stderr.read().decode()
             time.sleep(0.05)
         assert Path(path).exists()
+        assert Path(path + ".stop").exists()
         assert Path(path).stat().st_mode & 0o077 == 0
+        assert Path(path + ".stop").stat().st_mode & 0o077 == 0
         assert Path(path).stat().st_uid == os.getuid()
+        assert Path(path + ".stop").stat().st_uid == os.getuid()
         gateway(path)
         assert host.poll() is None
         gateway(path, {"TERMEX_TERMINAL": "ghostty", "TERMEX_ATTACH_POLICY": "existing",
@@ -130,14 +141,14 @@ with tempfile.TemporaryDirectory(prefix="termex-ipc-") as temporary:
         assert exchange(path, b'{"op":"ping","clientInfo":{"name":"trusted"}}') == {"ok": False}
         assert exchange(path, b'{"op":"ping"}') == {"ok": True}
         assert exchange(path, b'{"op":"access_status"}') == {"sessions": []}
-        first_stop = exchange(path, b'{"op":"stop"}')
-        second_stop = exchange(path, b'{"op":"stop"}')
+        first_stop = stop(path)
+        second_stop = stop(path)
         assert first_stop == {"stopped": True, "epoch": 1}, first_stop
         assert second_stop == {"stopped": True, "epoch": 2}, second_stop
         assert exchange(path, b'{"op":"access_status"}') == {"sessions": []}
         stopped = subprocess.run([host_binary, "--stop", "--socket", path], capture_output=True, text=True)
         assert stopped.returncode == 0 and stopped.stdout == "Access revoked\n", stopped
-        assert exchange(path, b'{"op":"stop"}') == {"stopped": True, "epoch": 4}
+        assert stop(path) == {"stopped": True, "epoch": 4}
         invalid_consent = subprocess.run([consent_binary], input=b'{}', capture_output=True, timeout=5)
         assert invalid_consent.returncode == 0 and json.loads(invalid_consent.stdout) == {"cancelled": True}
         with socket.socket(socket.AF_UNIX) as persistent:
@@ -172,6 +183,7 @@ with tempfile.TemporaryDirectory(prefix="termex-ipc-") as temporary:
                 excess.settimeout(5)
                 excess.connect(path)
                 assert excess.recv(1) == b"", "ninth client was not rejected"
+            assert stop(path) == {"stopped": True, "epoch": 5}, "Stop was blocked by eight clients"
         finally:
             for connection in holders:
                 connection.close()
@@ -206,6 +218,7 @@ with tempfile.TemporaryDirectory(prefix="termex-ipc-") as temporary:
             assert host.wait(timeout=3) == 0
             assert time.monotonic() - started < 3, "partial client delayed host stop"
         assert not Path(path).exists()
+        assert not Path(path + ".stop").exists()
         config_path.write_text('{"schema_version":1,"allowed_apps":["terminal"]}')
         config_path.chmod(0o600)
         restricted = subprocess.Popen([host_binary, "--socket", path, "--config", str(config_path)],
@@ -213,7 +226,7 @@ with tempfile.TemporaryDirectory(prefix="termex-ipc-") as temporary:
                                       stderr=subprocess.PIPE)
         try:
             for _ in range(100):
-                if Path(path).exists():
+                if Path(path).exists() and Path(path + ".stop").exists():
                     break
                 assert restricted.poll() is None
                 time.sleep(0.05)
