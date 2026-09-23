@@ -10,14 +10,26 @@ if args == ["--list-ghostty"] {
     print(String(decoding: try encoder.encode(choices), as: UTF8.self))
     exit(0)
 }
+if args == ["--list-terminal"] {
+    let choices = try TerminalDiscovery.list()
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    print(String(decoding: try encoder.encode(choices), as: UTF8.self))
+    exit(0)
+}
 if args.count == 5 && args[0] == "--resolve-ghostty" {
     let choice = try GhosttyDiscovery.resolve(appInstanceID: args[1], windowID: args[2],
                                               tabID: args[3], surfaceID: args[4])
     print(String(decoding: try JSONEncoder().encode(choice), as: UTF8.self))
     exit(0)
 }
+if args.count == 4 && args[0] == "--resolve-terminal" {
+    let choice = try TerminalDiscovery.resolve(appInstanceID: args[1], windowID: args[2], tty: args[3])
+    print(String(decoding: try JSONEncoder().encode(choice), as: UTF8.self))
+    exit(0)
+}
 guard args.count.isMultiple(of: 2) else {
-    fatalError("usage: termex-host [--socket private-path] [--config private-json-path] | --list-ghostty | --resolve-ghostty app-instance window-id tab-id surface-id")
+    fatalError("usage: termex-host [--socket private-path] [--config private-json-path] | --list-ghostty | --resolve-ghostty app-instance window-id tab-id surface-id | --list-terminal | --resolve-terminal app-instance window-id tty")
 }
 var path = LocalIPC.defaultPath
 var configURL = LocalConfig.defaultURL
