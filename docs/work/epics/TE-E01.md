@@ -25,6 +25,6 @@ TE-C01..04, TE-C06, TE-C09. Только тестовые окна; не мен�
 
 ## Текущее evidence
 
-На macOS 27.0 (26A428, Apple M5) прочитаны установленные словари Terminal.app 2.15 и Ghostty 1.3.1 без запуска приложений: [probe](../../../probes/dictionaries.py). Ghostty 1.3.1 не объявляет `pid`/`tty` surface, хотя текущий исходный словарь Ghostty их содержит. Изолированный [zsh probe](../../../probes/zsh/probe.py) прошёл часть сценариев TE-T003. Runtime Apple Events, clipboard export и tmux остаются `NOT_RUN`; `tmux` на стенде отсутствует. Словарь доказывает наличие селектора, но не его поведение в живой вкладке. Подробности и следующий шаг — в карточках задач.
+На macOS 27.0 (26A428, Apple M5) прочитаны установленные словари Terminal.app 2.15 и Ghostty 1.3.1 без запуска приложений: [probe](../../../probes/dictionaries.py). Ghostty 1.3.1 не объявляет `pid`/`tty` surface, хотя текущий исходный словарь Ghostty их содержит. Изолированный [zsh probe](../../../probes/zsh/probe.py) прошёл часть сценариев TE-T003. Установлен tmux 3.7c, отдельные [tmux](../../../probes/tmux/probe.sh) и [Swift MCP](../../../probes/mcp/Package.swift) probes прошли базовый capture и stdio roundtrip. Runtime Apple Events и clipboard export остаются `NOT_RUN`. Словарь доказывает наличие селектора, но не его поведение в живой вкладке. Подробности и следующий шаг — в карточках задач.
 
 [Источники](../../research/sources.md), [ADR стека](../../architecture/decisions/TE-ADR-002-stack.md).

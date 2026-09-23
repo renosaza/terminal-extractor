@@ -4,13 +4,15 @@ status: draft
 ---
 # Разработка и выпуск: текущее состояние
 
-Сейчас в репозитории документация и task cards. Нет Package.swift, runtime source, installer, release binary или CI. Поэтому здесь нет команды установки/запуска, которая выдавалась бы за уже работающую. Предлагаемый стек — [архитектура](../architecture/README.md), запуск реализации — [TE-E01](../work/epics/TE-E01.md).
+Сейчас в репозитории документация, task cards и feasibility probes. Нет продуктового runtime, installer, release binary или CI. `probes/mcp/Package.swift` собирает только тестовый MCP stdio server; это не готовый Terminal Extractor. Предлагаемый стек — [архитектура](../architecture/README.md), запуск реализации — [TE-E01](../work/epics/TE-E01.md).
 
 ## Начало реализации
 
 Прочитать AGENTS.md, [ограничения](../constraints.md), PRD и свою карточку. Первый шаг — capability probes на отдельном безопасном macOS стенде. Записать версии, права, exact API и результат до выбора minimum supported versions. Feasibility результаты затем обновляют ADR-002, capabilities и карточки.
 
-Будущие области кода: core/session-registry, adapters/terminal-app, adapters/ghostty, adapters/tmux, shell-integration, journal, compression, mcp, host-ui и tests. Это план модулей, не существующее дерево. Первую фактическую структуру и реальные build/test commands вводит TE-T005; минимально необходимые dependencies фиксируются вместе с lockfile.
+Для повторения TE-T004 на macOS с tmux 3.7c и Swift 6.4: `sh probes/tmux/probe.sh`, `swift build --package-path probes/mcp -c release`, `python3 probes/mcp/check.py`. Swift SDK закреплён в probe `Package.resolved`; `.build` локальный и игнорируется Git. Другие probes: `python3 probes/dictionaries.py`, `python3 probes/zsh/probe.py`. Эти команды проверяют только записанные fixture-сценарии.
+
+Будущие области кода: core/session-registry, adapters/terminal-app, adapters/ghostty, adapters/tmux, shell-integration, journal, compression, mcp, host-ui и tests. Это план модулей, не существующее продуктовое дерево. Product manifest/build commands вводятся с runtime реализацией, а не копируются из probe.
 
 ## Документация
 
