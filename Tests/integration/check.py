@@ -122,6 +122,49 @@ with tempfile.TemporaryDirectory(prefix="termex-ipc-") as temporary:
         assert exchange(path, b'{}') == {"ok": False}
         assert exchange(path, b'{"op":"ping","clientInfo":{"name":"trusted"}}') == {"ok": False}
         assert exchange(path, b'{"op":"ping"}') == {"ok": True}
+        with socket.socket(socket.AF_UNIX) as persistent:
+            persistent.settimeout(5)
+            persistent.connect(path)
+            for _ in range(2):
+                message = b'{"op":"ping"}'
+                persistent.sendall(struct.pack("!I", len(message)) + message)
+                size = struct.unpack("!I", exact(persistent, 4))[0]
+                assert json.loads(exact(persistent, size)) == {"ok": True}
+            assert exchange(path, b'{"op":"ping"}') == {"ok": True}
+        with socket.socket(socket.AF_UNIX) as half_closed:
+            half_closed.settimeout(5)
+            half_closed.connect(path)
+            message = b'{"op":"ping"}'
+            half_closed.sendall(struct.pack("!I", len(message)) + message)
+            half_closed.shutdown(socket.SHUT_WR)
+            size = struct.unpack("!I", exact(half_closed, 4))[0]
+            assert json.loads(exact(half_closed, size)) == {"ok": True}
+        holders = []
+        try:
+            for _ in range(8):
+                connection = socket.socket(socket.AF_UNIX)
+                connection.settimeout(5)
+                connection.connect(path)
+                holders.append(connection)
+                message = b'{"op":"ping"}'
+                connection.sendall(struct.pack("!I", len(message)) + message)
+                size = struct.unpack("!I", exact(connection, 4))[0]
+                assert json.loads(exact(connection, size)) == {"ok": True}
+            with socket.socket(socket.AF_UNIX) as excess:
+                excess.settimeout(5)
+                excess.connect(path)
+                assert excess.recv(1) == b"", "ninth client was not rejected"
+        finally:
+            for connection in holders:
+                connection.close()
+        for attempt in range(20):
+            try:
+                assert exchange(path, b'{"op":"ping"}') == {"ok": True}
+                break
+            except (OSError, AssertionError):
+                if attempt == 19:
+                    raise
+                time.sleep(0.05)
         rejected(path, struct.pack("!I", 65537))
         rejected(path, struct.pack("!I", 0))
         gateway(path)
@@ -131,8 +174,19 @@ with tempfile.TemporaryDirectory(prefix="termex-ipc-") as temporary:
             slow.sendall(struct.pack("!I", 16) + b"x")
             time.sleep(5.2)
             assert exchange(path, b'{"op":"ping"}') == {"ok": True}
-        host.terminate()
-        assert host.wait(timeout=5) == 0
+        with socket.socket(socket.AF_UNIX) as partial:
+            partial.settimeout(5)
+            partial.connect(path)
+            message = b'{"op":"ping"}'
+            partial.sendall(struct.pack("!I", len(message)) + message)
+            size = struct.unpack("!I", exact(partial, 4))[0]
+            assert json.loads(exact(partial, size)) == {"ok": True}
+            partial.sendall(struct.pack("!I", 16) + b"x")
+            time.sleep(0.3)
+            started = time.monotonic()
+            host.terminate()
+            assert host.wait(timeout=3) == 0
+            assert time.monotonic() - started < 3, "partial client delayed host stop"
         assert not Path(path).exists()
         config_path.write_text('{"schema_version":1,"allowed_apps":["terminal"]}')
         config_path.chmod(0o600)
@@ -157,7 +211,7 @@ with tempfile.TemporaryDirectory(prefix="termex-ipc-") as temporary:
             if restricted.poll() is None:
                 restricted.kill()
                 restricted.wait()
-        print("host_lifetime=PASS gateway_reconnect=PASS capabilities=PASS env_policy=PASS peer_owner=PASS no_env_leak=PASS invalid_payload=PASS slow_frame=PASS cleanup=PASS")
+        print("host_lifetime=PASS persistent_client=PASS client_limit=PASS fast_stop=PASS gateway_reconnect=PASS capabilities=PASS env_policy=PASS peer_owner=PASS no_env_leak=PASS invalid_payload=PASS slow_frame=PASS cleanup=PASS")
     finally:
         if host.poll() is None:
             host.kill()
