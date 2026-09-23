@@ -3,8 +3,21 @@ import Foundation
 import TermexCore
 
 let args = Array(CommandLine.arguments.dropFirst())
+if args == ["--list-ghostty"] {
+    let choices = try GhosttyDiscovery.list()
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    print(String(decoding: try encoder.encode(choices), as: UTF8.self))
+    exit(0)
+}
+if args.count == 5 && args[0] == "--resolve-ghostty" {
+    let choice = try GhosttyDiscovery.resolve(appInstanceID: args[1], windowID: args[2],
+                                              tabID: args[3], surfaceID: args[4])
+    print(String(decoding: try JSONEncoder().encode(choice), as: UTF8.self))
+    exit(0)
+}
 guard args.count.isMultiple(of: 2) else {
-    fatalError("usage: termex-host [--socket private-path] [--config private-json-path]")
+    fatalError("usage: termex-host [--socket private-path] [--config private-json-path] | --list-ghostty | --resolve-ghostty app-instance window-id tab-id surface-id")
 }
 var path = LocalIPC.defaultPath
 var configURL = LocalConfig.defaultURL
