@@ -29,6 +29,12 @@ Node/TypeScript требует native helper для тех же macOS API. Rust 
 
 Managed mode добавляет tmux dependency и терминальные различия, которые нужно тестировать. Native Terminal.app full interactive support остаётся feasibility gate. Core не зависит от ML, web service или облака. Protocol revision выбирается по фактической совместимости SDK/client, а не по слову latest.
 
+## Проверка осуществимости 2026-09-23
+
+На стенде macOS 27.0 (26A428, Apple M5) доступен Swift 6.4, tmux отсутствует. Установленные Terminal.app 2.15 и Ghostty 1.3.1 имеют scripting dictionaries; адресное выполнение и capture в живых окнах ещё не проверены. Ghostty 1.3.1 не объявляет surface `pid`/`tty`, хотя текущий upstream dictionary уже объявляет: capability определяется установленным bundle, не текущим source. Изолированный zsh 5.9 probe подтвердил часть command boundaries и startup order ([TE-T003](../../work/tasks/TE-T003.md)).
+
+[Swift MCP SDK 0.12.1](https://github.com/modelcontextprotocol/swift-sdk/releases/tag/0.12.1) — кандидат для проверки: tag commit `a0ae212ebf6eab5f754c3129608bc5557637e605`, Swift tools минимум 6.1, заявленные protocol revisions до `2025-11-25`. Ни SDK roundtrip, ни tmux capture не запускались; pin, minimum app versions и `decision_status` остаются proposed. [Текущее состояние TE-T004](../../work/tasks/TE-T004.md).
+
 ## Пересмотреть, когда
 
 TE-T004 докажет blocker SDK/packaging либо native API предоставит более сильный поток/command interface. Принять стек после прототипа на обоих приложениях и документированной оценки альтернатив. До этого `decision_status: proposed`.
