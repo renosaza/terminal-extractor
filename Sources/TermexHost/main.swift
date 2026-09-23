@@ -3,6 +3,14 @@ import Foundation
 import TermexCore
 
 let args = Array(CommandLine.arguments.dropFirst())
+if args == ["--stop"] || (args.count == 3 && args[0] == "--stop" && args[1] == "--socket") {
+    let fd = try LocalIPC.connect(to: (args.count == 3 ? args[2] : LocalIPC.defaultPath) + ".stop")
+    defer { Darwin.close(fd) }
+    let reply = try JSONSerialization.jsonObject(with: LocalIPC.readFrame(fd)) as? [String: Any]
+    guard reply?["stopped"] as? Bool == true else { throw LocalIPC.Failure.invalidFrame }
+    print("Access revoked")
+    exit(0)
+}
 if args == ["--list-ghostty"] {
     let choices = try GhosttyDiscovery.list()
     let encoder = JSONEncoder()
@@ -29,7 +37,7 @@ if args.count == 4 && args[0] == "--resolve-terminal" {
     exit(0)
 }
 guard args.count.isMultiple(of: 2) else {
-    fatalError("usage: termex-host [--socket private-path] [--config private-json-path] | --list-ghostty | --resolve-ghostty app-instance window-id tab-id surface-id | --list-terminal | --resolve-terminal app-instance window-id tty")
+    fatalError("usage: termex-host [--socket private-path] [--config private-json-path] | --stop [--socket private-path] | --list-ghostty | --resolve-ghostty app-instance window-id tab-id surface-id | --list-terminal | --resolve-terminal app-instance window-id tty")
 }
 var path = LocalIPC.defaultPath
 var configURL = LocalConfig.defaultURL
@@ -77,13 +85,15 @@ let config = try LocalConfig.load(at: configURL, requireExisting: explicitConfig
             let response: [String: Any]
             do {
                 guard config.allowedApps.contains(.ghostty) else { throw ConsentFlow.Failure.noChoices }
+                let expectedEpoch = grants.currentEpoch()
                 if let approved = try consent.request(stopping: stopping) {
                     guard !stopping() else { throw ConsentFlow.Failure.stopped }
-                    if grants.allow(approved, connection: connectionID) {
+                    if let grant = grants.allow(approved, connection: connectionID, expectedEpoch: expectedEpoch) {
                         response = ["status": "approved", "session_id": approved.session.id.uuidString,
                                     "generation": approved.session.generation,
-                                    "scope": approved.scope.rawValue, "terminal_access": false]
-                    } else { response = ["status": "writer_busy"] }
+                                    "scope": approved.scope.rawValue, "grant_token": grant.token.uuidString,
+                                    "terminal_access": false]
+                    } else { response = ["status": "revoked_or_writer_busy"] }
                 } else { response = ["status": "cancelled"] }
             } catch ConsentFlow.Failure.busy { response = ["status": "busy"] }
             catch ConsentFlow.Failure.noChoices { response = ["status": "no_sessions"] }
@@ -105,6 +115,9 @@ let config = try LocalConfig.load(at: configURL, requireExisting: explicitConfig
 
 let listener = try LocalIPC.listen(at: path)
 defer { Darwin.close(listener); unlink(path) }
+let stopPath = path + ".stop"
+let stopListener = try LocalIPC.listen(at: stopPath)
+defer { Darwin.close(stopListener); unlink(stopPath) }
 
 // The host remains alive across gateway exits; a signal closes only this listener.
 signal(SIGINT, SIG_IGN)
@@ -169,11 +182,21 @@ let consent = ConsentFlow()
 let pool = ClientPool(grants: grants)
 defer { pool.stop(); pool.wait() }
 while stopping.wait(timeout: .now()) == .timedOut {
-    var pending = pollfd(fd: listener, events: Int16(POLLIN), revents: 0)
-    let ready = poll(&pending, 1, 250)
+    var pending = [pollfd(fd: stopListener, events: Int16(POLLIN), revents: 0),
+                   pollfd(fd: listener, events: Int16(POLLIN), revents: 0)]
+    let ready = pending.withUnsafeMutableBufferPointer { poll($0.baseAddress, nfds_t($0.count), 250) }
     if ready == 0 || (ready < 0 && errno == EINTR) { continue }
-    if ready < 0 || pending.revents & Int16(POLLNVAL | POLLERR) != 0 { break }
-    if pending.revents & Int16(POLLIN) == 0 { continue }
+    if ready < 0 || pending.contains(where: { $0.revents & Int16(POLLNVAL | POLLERR) != 0 }) { break }
+    if pending[0].revents & Int16(POLLIN) != 0 {
+        do {
+            let client = try LocalIPC.accept(stopListener)
+            let epoch = grants.revokeAll()
+            try? LocalIPC.writeFrame(try JSONSerialization.data(withJSONObject: ["stopped": true, "epoch": epoch]), to: client)
+            Darwin.close(client)
+        } catch LocalIPC.Failure.unauthorizedPeer { continue }
+        catch { break }
+    }
+    if pending[1].revents & Int16(POLLIN) == 0 { continue }
     do {
         let client = try LocalIPC.accept(listener)
         guard let id = pool.add(client) else { Darwin.close(client); continue }

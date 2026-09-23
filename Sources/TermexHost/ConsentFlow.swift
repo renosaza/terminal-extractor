@@ -9,34 +9,65 @@ struct ConsentResult {
 }
 
 final class ConnectionGrants: @unchecked Sendable {
+    struct Grant {
+        let result: ConsentResult
+        let token: UUID
+        let epoch: UInt64
+    }
     private let lock = NSLock()
-    private var entries: [UUID: [UUID: ConsentResult]] = [:]
+    private var entries: [UUID: [UUID: Grant]] = [:]
     private var writers: [UUID: UUID] = [:]
+    private var epoch: UInt64 = 0
 
-    func allow(_ result: ConsentResult, connection: UUID) -> Bool {
+    func currentEpoch() -> UInt64 {
         lock.lock()
         defer { lock.unlock() }
+        return epoch
+    }
+
+    func allow(_ result: ConsentResult, connection: UUID, expectedEpoch: UInt64) -> Grant? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard epoch == expectedEpoch else { return nil }
         let sessionID = result.session.id
-        if result.scope == .control, let writer = writers[sessionID], writer != connection { return false }
-        if entries[connection]?[sessionID]?.scope == .control { writers.removeValue(forKey: sessionID) }
-        entries[connection, default: [:]][result.session.id] = result
+        if result.scope == .control, let writer = writers[sessionID], writer != connection { return nil }
+        if entries[connection]?[sessionID]?.result.scope == .control { writers.removeValue(forKey: sessionID) }
+        let grant = Grant(result: result, token: UUID(), epoch: epoch)
+        entries[connection, default: [:]][sessionID] = grant
         if result.scope == .control { writers[sessionID] = connection }
-        return true
+        return grant
+    }
+
+    func check(connection: UUID, session: SessionRef, token: UUID, scope: ConsentScope) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let grant = entries[connection]?[session.id], grant.token == token,
+              grant.epoch == epoch, grant.result.session == session else { return false }
+        return grant.result.scope == .control || scope == .read
+    }
+
+    func revokeAll() -> UInt64 {
+        lock.lock()
+        defer { lock.unlock() }
+        epoch &+= 1
+        entries.removeAll()
+        writers.removeAll()
+        return epoch
     }
 
     func list(connection: UUID) -> [[String: Any]] {
         lock.lock()
         let values = Array(entries[connection, default: [:]].values)
         lock.unlock()
-        return values.map { ["session_id": $0.session.id.uuidString,
-                             "generation": $0.session.generation,
-                             "scope": $0.scope.rawValue] }
+        return values.map { ["session_id": $0.result.session.id.uuidString,
+                             "generation": $0.result.session.generation,
+                             "scope": $0.result.scope.rawValue] }
     }
 
     func remove(connection: UUID) {
         lock.lock()
-        for result in entries[connection, default: [:]].values where result.scope == .control {
-            if writers[result.session.id] == connection { writers.removeValue(forKey: result.session.id) }
+        for grant in entries[connection, default: [:]].values where grant.result.scope == .control {
+            if writers[grant.result.session.id] == connection { writers.removeValue(forKey: grant.result.session.id) }
         }
         entries.removeValue(forKey: connection)
         lock.unlock()

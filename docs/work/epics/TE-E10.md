@@ -2,7 +2,7 @@
 id: TE-E10
 type: epic
 status: draft
-task_status: backlog
+task_status: doing
 scope: safety-and-recovery
 ---
 # Локальное согласие, Stop и защита данных
@@ -24,3 +24,5 @@ TE-C03..07, TE-C09. Не обещать sandbox или автоматическ�
 [TE-T037](../tasks/TE-T037.md), [TE-T038](../tasks/TE-T038.md), [TE-T039](../tasks/TE-T039.md), [TE-T040](../tasks/TE-T040.md).
 
 [Security design](../../architecture/security.md).
+
+Промежуточный локальный Stop и grant epoch реализованы в [TE-T038](../tasks/TE-T038.md). Menu-bar UI, privacy mode и безопасный read dispatch ещё не реализованы.
