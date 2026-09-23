@@ -3,6 +3,15 @@ import Foundation
 import TermexCore
 
 let args = Array(CommandLine.arguments.dropFirst())
+if args == ["--stop"] || (args.count == 3 && args[0] == "--stop" && args[1] == "--socket") {
+    let fd = try LocalIPC.connect(to: args.count == 3 ? args[2] : LocalIPC.defaultPath)
+    defer { Darwin.close(fd) }
+    try LocalIPC.writeFrame(Data(#"{"op":"stop"}"#.utf8), to: fd)
+    let reply = try JSONSerialization.jsonObject(with: LocalIPC.readFrame(fd)) as? [String: Any]
+    guard reply?["stopped"] as? Bool == true else { throw LocalIPC.Failure.invalidFrame }
+    print("Access revoked")
+    exit(0)
+}
 if args == ["--list-ghostty"] {
     let choices = try GhosttyDiscovery.list()
     let encoder = JSONEncoder()
@@ -29,7 +38,7 @@ if args.count == 4 && args[0] == "--resolve-terminal" {
     exit(0)
 }
 guard args.count.isMultiple(of: 2) else {
-    fatalError("usage: termex-host [--socket private-path] [--config private-json-path] | --list-ghostty | --resolve-ghostty app-instance window-id tab-id surface-id | --list-terminal | --resolve-terminal app-instance window-id tty")
+    fatalError("usage: termex-host [--socket private-path] [--config private-json-path] | --stop [--socket private-path] | --list-ghostty | --resolve-ghostty app-instance window-id tab-id surface-id | --list-terminal | --resolve-terminal app-instance window-id tty")
 }
 var path = LocalIPC.defaultPath
 var configURL = LocalConfig.defaultURL
@@ -77,13 +86,15 @@ let config = try LocalConfig.load(at: configURL, requireExisting: explicitConfig
             let response: [String: Any]
             do {
                 guard config.allowedApps.contains(.ghostty) else { throw ConsentFlow.Failure.noChoices }
+                let expectedEpoch = grants.currentEpoch()
                 if let approved = try consent.request(stopping: stopping) {
                     guard !stopping() else { throw ConsentFlow.Failure.stopped }
-                    if grants.allow(approved, connection: connectionID) {
+                    if let grant = grants.allow(approved, connection: connectionID, expectedEpoch: expectedEpoch) {
                         response = ["status": "approved", "session_id": approved.session.id.uuidString,
                                     "generation": approved.session.generation,
-                                    "scope": approved.scope.rawValue, "terminal_access": false]
-                    } else { response = ["status": "writer_busy"] }
+                                    "scope": approved.scope.rawValue, "grant_token": grant.token.uuidString,
+                                    "terminal_access": false]
+                    } else { response = ["status": "revoked_or_writer_busy"] }
                 } else { response = ["status": "cancelled"] }
             } catch ConsentFlow.Failure.busy { response = ["status": "busy"] }
             catch ConsentFlow.Failure.noChoices { response = ["status": "no_sessions"] }
@@ -93,6 +104,10 @@ let config = try LocalConfig.load(at: configURL, requireExisting: explicitConfig
             guard request.count == 1 else { throw LocalIPC.Failure.invalidFrame }
             let response = try JSONSerialization.data(withJSONObject: ["sessions": grants.list(connection: connectionID)])
             try LocalIPC.writeFrame(response, to: client)
+        case "stop":
+            guard request.count == 1 else { throw LocalIPC.Failure.invalidFrame }
+            let epoch = grants.revokeAll()
+            try LocalIPC.writeFrame(try JSONSerialization.data(withJSONObject: ["stopped": true, "epoch": epoch]), to: client)
         default:
             throw LocalIPC.Failure.invalidFrame
         }

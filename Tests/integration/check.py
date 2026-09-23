@@ -130,6 +130,14 @@ with tempfile.TemporaryDirectory(prefix="termex-ipc-") as temporary:
         assert exchange(path, b'{"op":"ping","clientInfo":{"name":"trusted"}}') == {"ok": False}
         assert exchange(path, b'{"op":"ping"}') == {"ok": True}
         assert exchange(path, b'{"op":"access_status"}') == {"sessions": []}
+        first_stop = exchange(path, b'{"op":"stop"}')
+        second_stop = exchange(path, b'{"op":"stop"}')
+        assert first_stop == {"stopped": True, "epoch": 1}, first_stop
+        assert second_stop == {"stopped": True, "epoch": 2}, second_stop
+        assert exchange(path, b'{"op":"access_status"}') == {"sessions": []}
+        stopped = subprocess.run([host_binary, "--stop", "--socket", path], capture_output=True, text=True)
+        assert stopped.returncode == 0 and stopped.stdout == "Access revoked\n", stopped
+        assert exchange(path, b'{"op":"stop"}') == {"stopped": True, "epoch": 4}
         invalid_consent = subprocess.run([consent_binary], input=b'{}', capture_output=True, timeout=5)
         assert invalid_consent.returncode == 0 and json.loads(invalid_consent.stdout) == {"cancelled": True}
         with socket.socket(socket.AF_UNIX) as persistent:
@@ -222,7 +230,7 @@ with tempfile.TemporaryDirectory(prefix="termex-ipc-") as temporary:
             if restricted.poll() is None:
                 restricted.kill()
                 restricted.wait()
-        print("host_lifetime=PASS persistent_client=PASS client_limit=PASS fast_stop=PASS gateway_reconnect=PASS capabilities=PASS env_policy=PASS peer_owner=PASS no_env_leak=PASS invalid_payload=PASS slow_frame=PASS cleanup=PASS")
+        print("host_lifetime=PASS persistent_client=PASS client_limit=PASS fast_stop=PASS local_revoke=PASS gateway_reconnect=PASS capabilities=PASS env_policy=PASS peer_owner=PASS no_env_leak=PASS invalid_payload=PASS slow_frame=PASS cleanup=PASS")
     finally:
         if host.poll() is None:
             host.kill()

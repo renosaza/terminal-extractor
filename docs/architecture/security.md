@@ -16,7 +16,7 @@ Private Unix socket с проверкой owner/mode и peer identity; GUI broke
 
 App/helper signature и audit identity должны быть стабильны между обновлениями. First-run TCC выполняется только через стандартный macOS prompt; отказ не обходится. Запрашивать Automation для выбранных приложений. Accessibility требовать лишь для проверенного optional AX-read path, не по умолчанию для core. Screen Recording и full desktop keylogger не требуются.
 
-Текущий промежуточный host принимает same-UID IPC и может показать локальный выбор Ghostty по запросу такого процесса. Выбор записывается только за этим connection и не открывает терминальный read/input (`terminal_access=false`). Перед включением этих операций нужны authenticated gateway, локальный Stop и проверка grants/epoch у dispatch.
+Текущий промежуточный host принимает same-UID IPC и может показать локальный выбор Ghostty по запросу такого процесса. Выбор записывается только за этим connection и не открывает терминальный read/input (`terminal_access=false`). Host выдаёт connection-bound grant token после локального выбора; gateway пока не использует его, так как session operations закрыты. `termex-host --stop` отзывает grants увеличением epoch без ожидания MCP или helper. Перед включением read/input нужны стабильная identity gateway, отдельные permissions и проверка grants/epoch у dispatch.
 
 ## Grants и writer lease
 
