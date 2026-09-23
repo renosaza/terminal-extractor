@@ -47,6 +47,8 @@ Mutation context: `request_id` длиной 1..128, `session_id`, `generation`; 
 
 Read tools не должны менять clipboard без объявленного opt-in capability. Screen read через native Ghostty export имеет side effect; его annotation и description должны честно отражать это. Read/write policy различает content-read и clipboard side effect.
 
+При нескольких targets `terminal_list` выдаёт отдельную строку для каждой доступной вкладки Terminal.app и каждой surface Ghostty вместе с app/window/tab/surface metadata для выбора человеком. Локально подтверждённый opaque handle выбранной строки передаётся в `terminal_attach`; title и порядковый номер служат только для отображения. Отсутствующий, неоднозначный или устаревший выбор — ошибка без fallback на focused/первый target.
+
 ## Пример: быстрая команда
 
 Запрос terminal_execute:

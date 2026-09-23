@@ -19,7 +19,7 @@ Use the repository-local project-docs-init, project-docs-migrate and project-doc
 
 The authoritative bans are [docs/constraints.md](docs/constraints.md). Every operation binds an explicit session and generation; current focus is not routing authority. Preserve distinctions between native/managed capture, command/process state, observed/inferred facts and complete/partial history. Do not weaken consent or claim lossless capture from periodic snapshots.
 
-No build/test commands are verified yet: there is no runtime manifest or CI. Add commands only with the implementation that makes them real. Do not introduce infrastructure only to satisfy a template.
+There is no product runtime manifest or CI. Feasibility probe commands live in [local development](docs/guides/local-development.md); they do not build a product server. Add runtime commands only with the implementation that makes them real. Do not introduce infrastructure only to satisfy a template.
 
 ## Durable knowledge
 
