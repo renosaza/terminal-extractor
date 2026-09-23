@@ -4,7 +4,7 @@ status: draft
 ---
 # Разработка и выпуск: текущее состояние
 
-Сейчас в репозитории документация, task cards и feasibility probes. Нет продуктового runtime, installer, release binary или CI. `probes/mcp/Package.swift` собирает только тестовый MCP stdio server; это не готовый Terminal Extractor. Предлагаемый стек — [архитектура](../architecture/README.md), запуск реализации — [TE-E01](../work/epics/TE-E01.md).
+В репозитории есть документация, feasibility probes и начальная product SwiftPM foundation: отдельные CLI host и MCP gateway без terminal tools, grants и GUI. Installer, release binary и CI отсутствуют. `probes/mcp/Package.swift` собирает отдельный тестовый MCP stdio server. Предлагаемый стек — [архитектура](../architecture/README.md), текущее состояние — [TE-T005](../work/tasks/TE-T005.md).
 
 ## Начало реализации
 
@@ -12,7 +12,9 @@ status: draft
 
 Для повторения TE-T004 на macOS с tmux 3.7c и Swift 6.4: `sh probes/tmux/probe.sh`, `swift build --package-path probes/mcp -c release`, `python3 probes/mcp/check.py`. Swift SDK закреплён в probe `Package.resolved`; `.build` локальный и игнорируется Git. Другие probes: `python3 probes/dictionaries.py`, `python3 probes/zsh/probe.py`. Эти команды проверяют только записанные fixture-сценарии.
 
-Будущие области кода: core/session-registry, adapters/terminal-app, adapters/ghostty, adapters/tmux, shell-integration, journal, compression, mcp, host-ui и tests. Это план модулей, не существующее продуктовое дерево. Product manifest/build commands вводятся с runtime реализацией, а не копируются из probe.
+Для foundation TE-T005: `swift build`, затем `python3 Tests/integration/check.py`. Product `Package.resolved` закрепляет зависимости отдельно от probe. Host использует private `~/Library/Application Support/TerminalExtractor/Run/host.sock`; опция `--socket` предназначена для отдельного приватного каталога при проверке. MCP gateway сообщает пустой список tools: подключение не даёт доступа к терминалу.
+
+Будущие области кода: session-registry, adapters/terminal-app, adapters/ghostty, adapters/tmux, shell-integration, journal, compression и host-ui. Это план модулей, не существующее продуктовое дерево.
 
 ## Документация
 

@@ -9,11 +9,11 @@ scope: terminal-app-native
 
 ## Результат
 
-Адресный existing/native-new access к Terminal.app: enumeration, retained text, binding и подтверждённые операции ввода.
+Адресный existing access к Terminal.app: enumeration, retained text, binding и подтверждённые операции ввода. Native-new зависит от доказанного пути создания и проверки новой вкладки на установленной версии.
 
 ## Завершён, когда
 
-Existing fixture продолжает тот же процесс; new создаётся только явно. Native snapshot coverage честна. Line submission протестирован, а произвольные keys либо доказаны безопасным API, либо объявлены unsupported без focus fallback. Последний случай не закрывает требование full native interactive control.
+Existing fixture продолжает тот же процесс; new создаётся только явно и получает PASS лишь после успешного создания/binding без пустого orphan window. Native snapshot coverage честна. Line submission протестирован, а произвольные keys либо доказаны безопасным API, либо объявлены unsupported без focus fallback. Последний случай не закрывает требование full native interactive control.
 
 ## Ограничения
 

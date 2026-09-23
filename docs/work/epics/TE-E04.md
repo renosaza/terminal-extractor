@@ -13,7 +13,7 @@ scope: ghostty-native
 
 ## Завершён, когда
 
-Stable binding выдерживает split/reorder/restart, клавиши не зависят от focus, экспорт не использует screenshot/OCR/paste filepath. Clipboard path проверяется и операции конфликта fail closed. Версии перечислены фактически.
+Stable binding выдерживает split/reorder/restart, клавиши не зависят от focus, экспорт не использует screenshot/OCR/paste filepath. Clipboard path проверяется и операции конфликта fail closed. Версии перечислены фактически; surface `pid`/`tty` не заявляются для установленного Ghostty 1.3.1.
 
 ## Ограничения
 
