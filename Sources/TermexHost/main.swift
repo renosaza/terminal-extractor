@@ -48,6 +48,7 @@ while stopping.wait(timeout: .now()) == .timedOut {
     if ready < 0 || pending.revents & Int16(POLLIN) == 0 { break }
     let client: Int32
     do { client = try LocalIPC.accept(listener) }
+    catch LocalIPC.Failure.unauthorizedPeer { continue }
     catch { break }
     defer { Darwin.close(client) }
     do {

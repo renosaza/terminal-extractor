@@ -5,7 +5,7 @@ public enum LocalIPC {
     public static let maxFrame = 64 * 1024
 
     public enum Failure: Error {
-        case invalidPath, invalidFrame, disconnected, timedOut, system(Int32)
+        case invalidPath, invalidFrame, unauthorizedPeer, disconnected, timedOut, system(Int32)
     }
 
     public static var defaultPath: String {
@@ -51,6 +51,13 @@ public enum LocalIPC {
         }
     }
 
+    private static func verifyPeer(_ fd: Int32) throws {
+        var uid: uid_t = 0
+        var gid: gid_t = 0
+        guard getpeereid(fd, &uid, &gid) == 0 else { throw Failure.unauthorizedPeer }
+        guard uid == geteuid() else { throw Failure.unauthorizedPeer }
+    }
+
     public static func listen(at path: String) throws -> Int32 {
         try prepareDirectory(for: path)
         var address = try address(path)
@@ -88,6 +95,7 @@ public enum LocalIPC {
                 }
             }
             guard result == 0 else { throw Failure.system(errno) }
+            try verifyPeer(fd)
             return fd
         } catch {
             Darwin.close(fd)
@@ -98,7 +106,7 @@ public enum LocalIPC {
     public static func accept(_ listener: Int32) throws -> Int32 {
         let fd = Darwin.accept(listener, nil, nil)
         guard fd >= 0 else { throw Failure.system(errno) }
-        do { try configure(fd); return fd }
+        do { try configure(fd); try verifyPeer(fd); return fd }
         catch { Darwin.close(fd); throw error }
     }
 

@@ -11,7 +11,12 @@ struct TermexMCP {
             fatalError("usage: termex-mcp [--socket private-path]")
         }
         let path = args.count == 3 ? args[2] : LocalIPC.defaultPath
-        let preferences = ProcessInfo.processInfo.environment.filter { $0.key.hasPrefix("TERMEX_") }
+        let keys: Set<String> = ["TERMEX_TERMINAL", "TERMEX_ATTACH_POLICY", "TERMEX_NEW_BACKEND"]
+        let environment = ProcessInfo.processInfo.environment
+        guard environment.keys.filter({ $0.hasPrefix("TERMEX_") }).allSatisfy(keys.contains) else {
+            throw LocalConfig.Failure.invalidEnvironment
+        }
+        let preferences = environment.filter { keys.contains($0.key) }
         let fd = try LocalIPC.connect(to: path)
         defer { Darwin.close(fd) }
         let request = try JSONSerialization.data(withJSONObject: [

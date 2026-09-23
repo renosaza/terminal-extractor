@@ -3,6 +3,7 @@
 
 import json
 import os
+import select
 import socket
 import struct
 import subprocess
@@ -100,6 +101,7 @@ with tempfile.TemporaryDirectory(prefix="termex-ipc-") as temporary:
             time.sleep(0.05)
         assert Path(path).exists()
         assert Path(path).stat().st_mode & 0o077 == 0
+        assert Path(path).stat().st_uid == os.getuid()
         gateway(path)
         assert host.poll() is None
         gateway(path, {"TERMEX_TERMINAL": "ghostty", "TERMEX_ATTACH_POLICY": "existing",
@@ -108,7 +110,17 @@ with tempfile.TemporaryDirectory(prefix="termex-ipc-") as temporary:
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 env={**clean_environment, "TERMEX_ALLOWED_APPS": "ghostty"})
         assert denied.returncode != 0 and not denied.stdout
+        probe_path = str(Path(temporary) / "probe.sock")
+        with socket.socket(socket.AF_UNIX) as probe:
+            probe.bind(probe_path)
+            probe.listen(1)
+            denied = subprocess.run([gateway_binary, "--socket", probe_path], stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    env={**clean_environment, "TERMEX_SECRET": "must-not-cross-ipc"})
+            assert denied.returncode != 0 and not denied.stdout
+            assert not select.select([probe], [], [], 0)[0], "unknown env reached IPC"
         assert exchange(path, b'{}') == {"ok": False}
+        assert exchange(path, b'{"op":"ping","clientInfo":{"name":"trusted"}}') == {"ok": False}
         assert exchange(path, b'{"op":"ping"}') == {"ok": True}
         rejected(path, struct.pack("!I", 65537))
         rejected(path, struct.pack("!I", 0))
@@ -145,7 +157,7 @@ with tempfile.TemporaryDirectory(prefix="termex-ipc-") as temporary:
             if restricted.poll() is None:
                 restricted.kill()
                 restricted.wait()
-        print("host_lifetime=PASS gateway_reconnect=PASS capabilities=PASS env_policy=PASS invalid_payload=PASS slow_frame=PASS cleanup=PASS")
+        print("host_lifetime=PASS gateway_reconnect=PASS capabilities=PASS env_policy=PASS peer_owner=PASS no_env_leak=PASS invalid_payload=PASS slow_frame=PASS cleanup=PASS")
     finally:
         if host.poll() is None:
             host.kill()
