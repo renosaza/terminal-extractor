@@ -9,12 +9,18 @@ defer { try? FileManager.default.removeItem(at: root) }
 let start = Date()
 let directory = root.appendingPathComponent("ABCDEFGHIJKLMNOPQRSTUV")
 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
-                                        attributes: [.posixPermissions: 0o700])
+                                        attributes: [.posixPermissions: 0o755])
+assert(chmod(directory.path, 0o755) == 0)
 let file = directory.appendingPathComponent("screen.txt")
 try Data("selected screen".utf8).write(to: file)
 assert(chmod(file.path, 0o600) == 0)
 let contents = try GhosttyExportFile.read(file.path, in: root.path, createdAfter: start)
 assert(contents == Data("selected screen".utf8))
+guard let canonical = realpath(root.path, nil) else { fatalError("cannot resolve fixture root") }
+defer { free(canonical) }
+let alias = String(cString: canonical) + "/" + directory.lastPathComponent + "/screen.txt"
+let aliasContents = try GhosttyExportFile.read(alias, in: root.path, createdAfter: start)
+assert(aliasContents == contents)
 
 func rejected(_ path: String, since: Date = start) {
     do {
@@ -29,6 +35,9 @@ func rejected(_ path: String, since: Date = start) {
 rejected("/etc/passwd")
 rejected(directory.appendingPathComponent("../../screen.txt").path)
 rejected(file.path, since: Date(timeIntervalSinceNow: 30))
+assert(chmod(directory.path, 0o777) == 0)
+rejected(file.path)
+assert(chmod(directory.path, 0o755) == 0)
 try FileManager.default.removeItem(at: file)
 try FileManager.default.createSymbolicLink(at: file, withDestinationURL: URL(fileURLWithPath: "/etc/passwd"))
 rejected(file.path)

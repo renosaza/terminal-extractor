@@ -25,7 +25,7 @@ public enum GhosttyExportFile {
         var directory = stat()
         guard fstat(dirFD, &directory) == 0, directory.st_uid == geteuid(),
               directory.st_mode & S_IFMT == S_IFDIR,
-              directory.st_mode & 0o077 == 0,
+              directory.st_mode & 0o022 == 0,
               born(directory, after: start) else {
             throw Failure.invalidPath
         }
@@ -69,8 +69,14 @@ public enum GhosttyExportFile {
 
     private static func directoryName(for path: String, in temporaryRoot: String) -> String? {
         let root = temporaryRoot.hasSuffix("/") ? String(temporaryRoot.dropLast()) : temporaryRoot
-        guard path.hasPrefix(root + "/") else { return nil }
-        let parts = path.dropFirst(root.count + 1).split(separator: "/", omittingEmptySubsequences: false)
+        var prefix = root
+        if !path.hasPrefix(root + "/") {
+            guard let canonical = realpath(root, nil) else { return nil }
+            defer { free(canonical) }
+            prefix = String(cString: canonical)
+            guard path.hasPrefix(prefix + "/") else { return nil }
+        }
+        let parts = path.dropFirst(prefix.count + 1).split(separator: "/", omittingEmptySubsequences: false)
         guard parts.count == 2, parts[1] == "screen.txt", parts[0].utf8.count == 22,
               parts[0].utf8.allSatisfy({
                   (65...90).contains($0) || (97...122).contains($0) ||
