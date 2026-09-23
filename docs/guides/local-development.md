@@ -14,6 +14,8 @@ status: draft
 
 Для foundation TE-T005/006: `swift build`, `swift run TermexConfigCheck`, затем `python3 Tests/integration/check.py`. Product `Package.resolved` закрепляет зависимости отдельно от probe. Host использует private `~/Library/Application Support/TerminalExtractor/Run/host.sock`; опция `--socket` предназначена для отдельного приватного каталога при проверке, `--config` — для локального абсолютного JSON path. `terminal_capabilities` сообщает выбор с `terminal_access=false`; подключение не даёт доступа к терминалу.
 
+Для локальной проверки Ghostty discovery: `swift build`, `.build/debug/termex-host --list-ghostty`, `python3 Tests/integration/ghostty_discovery.py`. Список содержит IDs и названия **всех** открытых Ghostty surfaces и предназначен для локального пользователя; MCP/IPC его не возвращают. `.build/debug/termex-host --resolve-ghostty <app-instance-id> <window-id> <tab-id> <surface-id>` перепроверяет выбранную строку и отклоняет закрытую цель. Эти команды не выдают grant и не подключают session.
+
 Будущие области кода: session-registry, adapters/terminal-app, adapters/ghostty, adapters/tmux, shell-integration, journal, compression и host-ui. Это план модулей, не существующее продуктовое дерево.
 
 ## Документация
