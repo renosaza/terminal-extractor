@@ -14,6 +14,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[2]
 host_binary = root / ".build/debug/termex-host"
 gateway_binary = root / ".build/debug/termex-mcp"
+consent_binary = root / ".build/debug/termex-consent"
 clean_environment = {key: value for key, value in os.environ.items() if not key.startswith("TERMEX_")}
 
 
@@ -46,7 +47,7 @@ def rejected(path, header, body=b""):
         assert json.loads(exact(connection, size)) == {"ok": False}
 
 
-def gateway(path, preferences=None):
+def gateway(path, preferences=None, request_access=False):
     environment = clean_environment.copy()
     environment.update(preferences or {})
     process = subprocess.Popen([gateway_binary, "--socket", path], stdin=subprocess.PIPE,
@@ -63,7 +64,7 @@ def gateway(path, preferences=None):
         process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}) + "\n")
         process.stdin.flush()
         listed = json.loads(process.stdout.readline())
-        assert [tool["name"] for tool in listed["result"]["tools"]] == ["terminal_capabilities"], listed
+        assert [tool["name"] for tool in listed["result"]["tools"]] == ["terminal_capabilities", "terminal_request_access"], listed
         process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
             "name": "terminal_capabilities", "arguments": {}}}) + "\n")
         process.stdin.flush()
@@ -75,6 +76,12 @@ def gateway(path, preferences=None):
             "new_session_backend": (preferences or {}).get("TERMEX_NEW_BACKEND", "managed_tmux"),
         }
         assert capability == expected, capability
+        if request_access:
+            process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
+                "name": "terminal_request_access", "arguments": {}}}) + "\n")
+            process.stdin.flush()
+            selection = json.loads(process.stdout.readline())["result"]["structuredContent"]
+            assert selection == {"status": "no_sessions"}, selection
         process.stdin.close()
         assert process.wait(timeout=5) == 0, process.stderr.read()
     finally:
@@ -122,6 +129,9 @@ with tempfile.TemporaryDirectory(prefix="termex-ipc-") as temporary:
         assert exchange(path, b'{}') == {"ok": False}
         assert exchange(path, b'{"op":"ping","clientInfo":{"name":"trusted"}}') == {"ok": False}
         assert exchange(path, b'{"op":"ping"}') == {"ok": True}
+        assert exchange(path, b'{"op":"access_status"}') == {"sessions": []}
+        invalid_consent = subprocess.run([consent_binary], input=b'{}', capture_output=True, timeout=5)
+        assert invalid_consent.returncode == 0 and json.loads(invalid_consent.stdout) == {"cancelled": True}
         with socket.socket(socket.AF_UNIX) as persistent:
             persistent.settimeout(5)
             persistent.connect(path)
@@ -204,7 +214,8 @@ with tempfile.TemporaryDirectory(prefix="termex-ipc-") as temporary:
                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                           env={**clean_environment, "TERMEX_TERMINAL": "ghostty"})
             assert rejected_app.returncode != 0 and not rejected_app.stdout
-            gateway(path)
+            gateway(path, request_access=True)
+            assert exchange(path, b'{"op":"request_ghostty_access"}') == {"status": "no_sessions"}
             restricted.terminate()
             assert restricted.wait(timeout=5) == 0
         finally:

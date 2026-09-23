@@ -30,7 +30,7 @@ public final class SessionRegistry: @unchecked Sendable {
     private var byTarget: [GhosttyTarget: UUID] = [:]
     // ponytail: one registry revision invalidates all offers; use per-target revisions if selection churn becomes costly.
     private var revision: UInt64 = 0
-    private let offerLifetime: UInt64 = 60_000_000_000
+    private let offerLifetime: UInt64 = 120_000_000_000
 
     public init(resolve: @escaping @Sendable (GhosttyTarget) throws -> Void = { target in
         _ = try GhosttyDiscovery.resolve(appInstanceID: target.appInstanceID,
@@ -73,6 +73,12 @@ public final class SessionRegistry: @unchecked Sendable {
         sessions[ref.id] = (offer.target, ref.generation, true)
         byTarget[offer.target] = ref.id
         return ref
+    }
+
+    public func discardOffers(_ handles: [UUID]) {
+        lock.lock()
+        defer { lock.unlock() }
+        for handle in handles { offers.removeValue(forKey: handle) }
     }
 
     public func revalidate(_ ref: SessionRef) throws -> GhosttyTarget {

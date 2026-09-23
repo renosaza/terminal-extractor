@@ -49,7 +49,9 @@ for index in stride(from: 0, to: args.count, by: 2) {
 }
 let config = try LocalConfig.load(at: configURL, requireExisting: explicitConfig)
 
-@Sendable func serve(_ client: Int32, config: LocalConfig, stopping: @Sendable () -> Bool) -> Bool {
+@Sendable func serve(_ client: Int32, connectionID: UUID, config: LocalConfig,
+                     consent: ConsentFlow, grants: ConnectionGrants,
+                     stopping: @Sendable () -> Bool) -> Bool {
     do {
         let data = try LocalIPC.readFrame(client)
         guard let request = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -69,6 +71,27 @@ let config = try LocalConfig.load(at: configURL, requireExisting: explicitConfig
                 "attach_policy": selected.attachPolicy.rawValue,
                 "new_session_backend": selected.newSessionBackend.rawValue,
             ])
+            try LocalIPC.writeFrame(response, to: client)
+        case "request_ghostty_access":
+            guard request.count == 1 else { throw LocalIPC.Failure.invalidFrame }
+            let response: [String: Any]
+            do {
+                guard config.allowedApps.contains(.ghostty) else { throw ConsentFlow.Failure.noChoices }
+                if let approved = try consent.request(stopping: stopping) {
+                    guard !stopping() else { throw ConsentFlow.Failure.stopped }
+                    if grants.allow(approved, connection: connectionID) {
+                        response = ["status": "approved", "session_id": approved.session.id.uuidString,
+                                    "generation": approved.session.generation,
+                                    "scope": approved.scope.rawValue, "terminal_access": false]
+                    } else { response = ["status": "writer_busy"] }
+                } else { response = ["status": "cancelled"] }
+            } catch ConsentFlow.Failure.busy { response = ["status": "busy"] }
+            catch ConsentFlow.Failure.noChoices { response = ["status": "no_sessions"] }
+            catch { response = ["status": "unavailable"] }
+            try LocalIPC.writeFrame(JSONSerialization.data(withJSONObject: response), to: client)
+        case "access_status":
+            guard request.count == 1 else { throw LocalIPC.Failure.invalidFrame }
+            let response = try JSONSerialization.data(withJSONObject: ["sessions": grants.list(connection: connectionID)])
             try LocalIPC.writeFrame(response, to: client)
         default:
             throw LocalIPC.Failure.invalidFrame
@@ -101,6 +124,9 @@ final class ClientPool: @unchecked Sendable {
     private let group = DispatchGroup()
     private var clients: [Int32: UUID] = [:]
     private var stopped = false
+    private let grants: ConnectionGrants
+
+    init(grants: ConnectionGrants) { self.grants = grants }
 
     func add(_ fd: Int32) -> UUID? {
         lock.lock()
@@ -123,6 +149,7 @@ final class ClientPool: @unchecked Sendable {
         defer { lock.unlock() }
         guard clients[fd] == id else { return }
         clients.removeValue(forKey: fd)
+        grants.remove(connection: id)
         Darwin.close(fd)
         group.leave()
     }
@@ -137,7 +164,9 @@ final class ClientPool: @unchecked Sendable {
     func wait() { _ = group.wait(timeout: .now() + 5) }
 }
 
-let pool = ClientPool()
+let grants = ConnectionGrants()
+let consent = ConsentFlow()
+let pool = ClientPool(grants: grants)
 defer { pool.stop(); pool.wait() }
 while stopping.wait(timeout: .now()) == .timedOut {
     var pending = pollfd(fd: listener, events: Int16(POLLIN), revents: 0)
@@ -161,7 +190,8 @@ while stopping.wait(timeout: .now()) == .timedOut {
                     continue
                 }
                 if pending.revents & Int16(POLLIN) != 0 {
-                    guard serve(client, config: config, stopping: pool.isStopped) else { break }
+                    guard serve(client, connectionID: id, config: config, consent: consent,
+                                grants: grants, stopping: pool.isStopped) else { break }
                     lastActivity = DispatchTime.now().uptimeNanoseconds
                 } else if pending.revents & Int16(POLLHUP) != 0 { break }
             }
