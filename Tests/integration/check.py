@@ -72,7 +72,7 @@ def gateway(path, preferences=None, request_access=False):
         process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}) + "\n")
         process.stdin.flush()
         listed = json.loads(process.stdout.readline())
-        assert [tool["name"] for tool in listed["result"]["tools"]] == ["terminal_capabilities", "terminal_request_access"], listed
+        assert [tool["name"] for tool in listed["result"]["tools"]] == ["terminal_capabilities", "terminal_request_access", "terminal_screen"], listed
         process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
             "name": "terminal_capabilities", "arguments": {}}}) + "\n")
         process.stdin.flush()
@@ -84,6 +84,11 @@ def gateway(path, preferences=None, request_access=False):
             "new_session_backend": (preferences or {}).get("TERMEX_NEW_BACKEND", "managed_tmux"),
         }
         assert capability == expected, capability
+        process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {
+            "name": "terminal_screen", "arguments": {
+                "session_id": "11111111-1111-4111-8111-111111111111", "generation": 1}}}) + "\n")
+        process.stdin.flush()
+        assert json.loads(process.stdout.readline())["result"]["isError"] is True
         if request_access:
             process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
                 "name": "terminal_request_access", "arguments": {}}}) + "\n")
@@ -141,6 +146,7 @@ with tempfile.TemporaryDirectory(prefix="termex-ipc-") as temporary:
         assert exchange(path, b'{"op":"ping","clientInfo":{"name":"trusted"}}') == {"ok": False}
         assert exchange(path, b'{"op":"ping"}') == {"ok": True}
         assert exchange(path, b'{"op":"access_status"}') == {"sessions": []}
+        assert exchange(path, b'{"op":"read_ghostty_screen","session_id":"11111111-1111-4111-8111-111111111111","generation":1,"grant_token":"22222222-2222-4222-8222-222222222222"}') == {"ok": False}
         first_stop = stop(path)
         second_stop = stop(path)
         assert first_stop == {"stopped": True, "epoch": 1}, first_stop

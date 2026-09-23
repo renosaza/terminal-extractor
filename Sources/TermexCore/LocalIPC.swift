@@ -58,6 +58,28 @@ public enum LocalIPC {
         guard uid == geteuid() else { throw Failure.unauthorizedPeer }
     }
 
+    public static func verifyExecutable(_ fd: Int32, expectedPath: String) throws {
+        var pid: pid_t = 0
+        var size = socklen_t(MemoryLayout.size(ofValue: pid))
+        guard getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &size) == 0,
+              size == MemoryLayout.size(ofValue: pid), pid > 0 else {
+            throw Failure.unauthorizedPeer
+        }
+        var buffer = [CChar](repeating: 0, count: 4096)
+        guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else {
+            throw Failure.unauthorizedPeer
+        }
+        var actual = stat()
+        var expected = stat()
+        let path = String(decoding: buffer.prefix(while: { $0 != 0 }).map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        guard stat(path, &actual) == 0,
+              stat(expectedPath, &expected) == 0,
+              actual.st_dev == expected.st_dev, actual.st_ino == expected.st_ino,
+              expected.st_uid == geteuid(), expected.st_mode & S_IFMT == S_IFREG else {
+            throw Failure.unauthorizedPeer
+        }
+    }
+
     public static func listen(at path: String) throws -> Int32 {
         try prepareDirectory(for: path)
         var address = try address(path)

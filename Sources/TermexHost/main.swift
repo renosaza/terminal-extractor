@@ -86,13 +86,15 @@ let config = try LocalConfig.load(at: configURL, requireExisting: explicitConfig
             do {
                 guard config.allowedApps.contains(.ghostty) else { throw ConsentFlow.Failure.noChoices }
                 let expectedEpoch = grants.currentEpoch()
-                if let approved = try consent.request(stopping: stopping) {
+                if let approved = try consent.request(stopping: stopping,
+                                                       clipboardExportAvailable: config.nativeGhosttyClipboardExport) {
                     guard !stopping() else { throw ConsentFlow.Failure.stopped }
                     if let grant = grants.allow(approved, connection: connectionID, expectedEpoch: expectedEpoch) {
                         response = ["status": "approved", "session_id": approved.session.id.uuidString,
                                     "generation": approved.session.generation,
                                     "scope": approved.scope.rawValue, "grant_token": grant.token.uuidString,
-                                    "terminal_access": false]
+                                    "clipboard_export": approved.clipboardExport,
+                                    "terminal_access": approved.clipboardExport]
                     } else { response = ["status": "revoked_or_writer_busy"] }
                 } else { response = ["status": "cancelled"] }
             } catch ConsentFlow.Failure.busy { response = ["status": "busy"] }
@@ -102,6 +104,36 @@ let config = try LocalConfig.load(at: configURL, requireExisting: explicitConfig
         case "access_status":
             guard request.count == 1 else { throw LocalIPC.Failure.invalidFrame }
             let response = try JSONSerialization.data(withJSONObject: ["sessions": grants.list(connection: connectionID)])
+            try LocalIPC.writeFrame(response, to: client)
+        case "read_ghostty_screen":
+            guard request.count == 4,
+                  let idText = request["session_id"] as? String, let id = UUID(uuidString: idText),
+                  let generation = request["generation"] as? Int, generation > 0,
+                  let tokenText = request["grant_token"] as? String,
+                  let token = UUID(uuidString: tokenText) else { throw LocalIPC.Failure.invalidFrame }
+            let session = SessionRef(id: id, generation: UInt64(generation))
+            guard let gateway = Bundle.main.executableURL?.deletingLastPathComponent()
+                .appendingPathComponent("termex-mcp").path else { throw LocalIPC.Failure.unauthorizedPeer }
+            try LocalIPC.verifyExecutable(client, expectedPath: gateway)
+            guard config.nativeGhosttyClipboardExport,
+                  grants.check(connection: connectionID, session: session, token: token,
+                               scope: .read, clipboardExport: true) else {
+                throw LocalIPC.Failure.unauthorizedPeer
+            }
+            let target = try consent.revalidate(session)
+            let snapshot = try GhosttyScreenExport.read(target) {
+                grants.check(connection: connectionID, session: session, token: token,
+                             scope: .read, clipboardExport: true)
+            }
+            guard try consent.revalidate(session) == target,
+                  grants.check(connection: connectionID, session: session, token: token,
+                               scope: .read, clipboardExport: true) else {
+                throw LocalIPC.Failure.unauthorizedPeer
+            }
+            let response = try JSONSerialization.data(withJSONObject: [
+                "text": snapshot.text, "observed_at": ISO8601DateFormatter().string(from: snapshot.observedAt),
+                "source": "ghostty_screen_snapshot", "history_complete": false,
+            ])
             try LocalIPC.writeFrame(response, to: client)
         default:
             throw LocalIPC.Failure.invalidFrame

@@ -9,11 +9,23 @@ private struct Request: Decodable {
 
     let title: String
     let choices: [Choice]
+    let clipboardExportAvailable: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case title, choices
+        case clipboardExportAvailable = "clipboard_export_available"
+    }
 }
 
 private struct Approval: Encodable {
     let handle: String
     let scope: String
+    let clipboardExport: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case handle, scope
+        case clipboardExport = "clipboard_export"
+    }
 }
 
 private func safeLabel(_ text: String) -> Bool {
@@ -60,10 +72,18 @@ private func ask(_ request: Request) -> Approval? {
     }
     picker.selectItem(at: 0)
 
+    let clipboard = NSButton(checkboxWithTitle: "Allow screen export through clipboard", target: nil, action: nil)
+    clipboard.setAccessibilityLabel("Allow Ghostty screen export through clipboard")
+    clipboard.isEnabled = request.clipboardExportAvailable
+    let accessory = NSStackView(views: [picker, clipboard])
+    accessory.orientation = .vertical
+    accessory.spacing = 8
+    accessory.frame = NSRect(x: 0, y: 0, width: 480, height: 68)
+
     let alert = NSAlert()
     alert.messageText = request.title
-    alert.informativeText = "Choose one Ghostty pane and scope. Terminal read and input are not available yet."
-    alert.accessoryView = picker
+    alert.informativeText = "Choose one pane and scope. Screen export briefly changes the clipboard and may be visible to clipboard watchers. Input is unavailable."
+    alert.accessoryView = accessory
     alert.addButton(withTitle: "Select for read")
     alert.addButton(withTitle: "Select for read + control")
     alert.addButton(withTitle: "Cancel")
@@ -73,9 +93,11 @@ private func ask(_ request: Request) -> Approval? {
     guard index > 0, index <= request.choices.count else { return nil }
     switch response {
     case .alertFirstButtonReturn:
-        return Approval(handle: request.choices[index - 1].handle, scope: "read")
+        return Approval(handle: request.choices[index - 1].handle, scope: "read",
+                        clipboardExport: clipboard.state == .on && clipboard.isEnabled)
     case .alertSecondButtonReturn:
-        return Approval(handle: request.choices[index - 1].handle, scope: "control")
+        return Approval(handle: request.choices[index - 1].handle, scope: "control",
+                        clipboardExport: clipboard.state == .on && clipboard.isEnabled)
     default:
         return nil
     }
