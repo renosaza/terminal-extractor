@@ -13,6 +13,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[2]
 host_binary = root / ".build/debug/termex-host"
 gateway_binary = root / ".build/debug/termex-mcp"
+clean_environment = {key: value for key, value in os.environ.items() if not key.startswith("TERMEX_")}
 
 
 def exact(connection, count):
@@ -44,9 +45,12 @@ def rejected(path, header, body=b""):
         assert json.loads(exact(connection, size)) == {"ok": False}
 
 
-def gateway(path):
+def gateway(path, preferences=None):
+    environment = clean_environment.copy()
+    environment.update(preferences or {})
     process = subprocess.Popen([gateway_binary, "--socket", path], stdin=subprocess.PIPE,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                               env=environment)
     try:
         process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
             "protocolVersion": "2025-11-25", "capabilities": {},
@@ -58,7 +62,18 @@ def gateway(path):
         process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}) + "\n")
         process.stdin.flush()
         listed = json.loads(process.stdout.readline())
-        assert listed["result"]["tools"] == [], listed
+        assert [tool["name"] for tool in listed["result"]["tools"]] == ["terminal_capabilities"], listed
+        process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+            "name": "terminal_capabilities", "arguments": {}}}) + "\n")
+        process.stdin.flush()
+        capability = json.loads(process.stdout.readline())["result"]["structuredContent"]
+        expected = {
+            "runtime": "foundation", "terminal_access": False,
+            "terminal_app": (preferences or {}).get("TERMEX_TERMINAL", "terminal"),
+            "attach_policy": (preferences or {}).get("TERMEX_ATTACH_POLICY", "ask"),
+            "new_session_backend": (preferences or {}).get("TERMEX_NEW_BACKEND", "managed_tmux"),
+        }
+        assert capability == expected, capability
         process.stdin.close()
         assert process.wait(timeout=5) == 0, process.stderr.read()
     finally:
@@ -69,7 +84,13 @@ def gateway(path):
 
 with tempfile.TemporaryDirectory(prefix="termex-ipc-") as temporary:
     path = str(Path(temporary) / "host.sock")
-    host = subprocess.Popen([host_binary, "--socket", path], stdin=subprocess.DEVNULL,
+    config_path = Path(temporary) / "config.json"
+    missing = subprocess.run([host_binary, "--socket", path, "--config", str(config_path)],
+                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    assert missing.returncode != 0 and not Path(path).exists()
+    config_path.write_text('{"schema_version":1,"allowed_apps":["terminal","ghostty"]}')
+    config_path.chmod(0o600)
+    host = subprocess.Popen([host_binary, "--socket", path, "--config", str(config_path)], stdin=subprocess.DEVNULL,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         for _ in range(100):
@@ -81,6 +102,12 @@ with tempfile.TemporaryDirectory(prefix="termex-ipc-") as temporary:
         assert Path(path).stat().st_mode & 0o077 == 0
         gateway(path)
         assert host.poll() is None
+        gateway(path, {"TERMEX_TERMINAL": "ghostty", "TERMEX_ATTACH_POLICY": "existing",
+                       "TERMEX_NEW_BACKEND": "native"})
+        denied = subprocess.run([gateway_binary, "--socket", path], stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                env={**clean_environment, "TERMEX_ALLOWED_APPS": "ghostty"})
+        assert denied.returncode != 0 and not denied.stdout
         assert exchange(path, b'{}') == {"ok": False}
         assert exchange(path, b'{"op":"ping"}') == {"ok": True}
         rejected(path, struct.pack("!I", 65537))
@@ -95,7 +122,30 @@ with tempfile.TemporaryDirectory(prefix="termex-ipc-") as temporary:
         host.terminate()
         assert host.wait(timeout=5) == 0
         assert not Path(path).exists()
-        print("host_lifetime=PASS gateway_reconnect=PASS empty_tools=PASS invalid_payload=PASS slow_frame=PASS cleanup=PASS")
+        config_path.write_text('{"schema_version":1,"allowed_apps":["terminal"]}')
+        config_path.chmod(0o600)
+        restricted = subprocess.Popen([host_binary, "--socket", path, "--config", str(config_path)],
+                                      stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                      stderr=subprocess.PIPE)
+        try:
+            for _ in range(100):
+                if Path(path).exists():
+                    break
+                assert restricted.poll() is None
+                time.sleep(0.05)
+            assert Path(path).exists()
+            rejected_app = subprocess.run([gateway_binary, "--socket", path], stdin=subprocess.DEVNULL,
+                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                          env={**clean_environment, "TERMEX_TERMINAL": "ghostty"})
+            assert rejected_app.returncode != 0 and not rejected_app.stdout
+            gateway(path)
+            restricted.terminate()
+            assert restricted.wait(timeout=5) == 0
+        finally:
+            if restricted.poll() is None:
+                restricted.kill()
+                restricted.wait()
+        print("host_lifetime=PASS gateway_reconnect=PASS capabilities=PASS env_policy=PASS invalid_payload=PASS slow_frame=PASS cleanup=PASS")
     finally:
         if host.poll() is None:
             host.kill()

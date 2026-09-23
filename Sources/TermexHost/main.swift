@@ -2,11 +2,27 @@ import Darwin
 import Foundation
 import TermexCore
 
-let args = CommandLine.arguments
-let path = args.count == 3 && args[1] == "--socket" ? args[2] : LocalIPC.defaultPath
-guard args.count == 1 || (args.count == 3 && args[1] == "--socket") else {
-    fatalError("usage: termex-host [--socket private-path]")
+let args = Array(CommandLine.arguments.dropFirst())
+guard args.count.isMultiple(of: 2) else {
+    fatalError("usage: termex-host [--socket private-path] [--config private-json-path]")
 }
+var path = LocalIPC.defaultPath
+var configURL = LocalConfig.defaultURL
+var explicitConfig = false
+var seen = Set<String>()
+for index in stride(from: 0, to: args.count, by: 2) {
+    guard seen.insert(args[index]).inserted, args[index + 1].hasPrefix("/") else {
+        fatalError("duplicate option or non-absolute path")
+    }
+    switch args[index] {
+    case "--socket": path = args[index + 1]
+    case "--config":
+        configURL = URL(fileURLWithPath: args[index + 1])
+        explicitConfig = true
+    default: fatalError("unknown option")
+    }
+}
+let config = try LocalConfig.load(at: configURL, requireExisting: explicitConfig)
 
 let listener = try LocalIPC.listen(at: path)
 defer { Darwin.close(listener); unlink(path) }
@@ -36,9 +52,27 @@ while stopping.wait(timeout: .now()) == .timedOut {
     defer { Darwin.close(client) }
     do {
         let data = try LocalIPC.readFrame(client)
-        let request = try JSONSerialization.jsonObject(with: data) as? [String: String]
-        guard request == ["op": "ping"] else { throw LocalIPC.Failure.invalidFrame }
-        try LocalIPC.writeFrame(Data(#"{"ok":true}"#.utf8), to: client)
+        guard let request = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let operation = request["op"] as? String else { throw LocalIPC.Failure.invalidFrame }
+        switch operation {
+        case "ping":
+            guard request.count == 1 else { throw LocalIPC.Failure.invalidFrame }
+            try LocalIPC.writeFrame(Data(#"{"ok":true}"#.utf8), to: client)
+        case "resolve_preferences":
+            guard request.count == 2,
+                  let environment = request["environment"] as? [String: String] else {
+                throw LocalIPC.Failure.invalidFrame
+            }
+            let selected = try config.applyingPreferences(environment)
+            let response = try JSONSerialization.data(withJSONObject: [
+                "terminal_app": selected.terminalApp.rawValue,
+                "attach_policy": selected.attachPolicy.rawValue,
+                "new_session_backend": selected.newSessionBackend.rawValue,
+            ])
+            try LocalIPC.writeFrame(response, to: client)
+        default:
+            throw LocalIPC.Failure.invalidFrame
+        }
     } catch {
         try? LocalIPC.writeFrame(Data(#"{"ok":false}"#.utf8), to: client)
     }

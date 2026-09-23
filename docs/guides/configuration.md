@@ -4,11 +4,11 @@ status: draft
 ---
 # Проект настройки MCP-сервера
 
-Ниже будущий интерфейс. Binary и installer пока отсутствуют; примеры не являются командой, которую уже можно запустить.
+Product CLI host/gateway и локальный JSON config уже существуют как foundation. Installer, menu UI и terminal session tools ещё отсутствуют; примеры установки клиента ниже пока не являются готовой командой.
 
 ## Что выбирает пользователь
 
-`terminal_app`: `ghostty` или `terminal`. `attach_policy`: `existing`, `new` или `ask`. `new_session_backend`: `managed_tmux` или `native`. Эти параметры независимы. Default: terminal_app=terminal, attach_policy=ask, new_session_backend=managed_tmux. Выбор Ghostty не требует менять весь MCP protocol.
+`terminal_app`: `ghostty` или `terminal`. `attach_policy`: `existing`, `new` или `ask`. `new_session_backend`: `managed_tmux` или `native`. Эти параметры независимы. Default: terminal_app=terminal, allowed_apps=[terminal, ghostty], attach_policy=ask, new_session_backend=managed_tmux. Выбор Ghostty не требует менять весь MCP protocol.
 
 Приложение по умолчанию — не автоматический выбор target. Existing attach всё равно требует конкретную разрешённую вкладку/панель. Если приложение не установлено или запрещено TCC, вернуть явную ошибку, а не запустить другое.
 
@@ -46,7 +46,7 @@ status: draft
 }
 ```
 
-Числа — предложенные defaults. Unknown keys и неверные enum отклоняются. Config version required. Secure local file update atomic; policy changes invalidate grants/caches при необходимости. Agent tools не редактируют этот файл и не могут сами включить clipboard/recording permissions.
+Числа — текущие defaults модели. Существующий файл требует `schema_version: 1`; пропущенные поля получают defaults, unknown keys и неверные enum отклоняются. Файл читается только как regular file текущего пользователя с приватными правами; запись идёт атомарной заменой в каталоге `0700`, файл `0600`. Старой развёрнутой схемы нет: другие версии пока отклоняются без миграции. Agent tools не редактируют этот файл и не могут сами включить clipboard/recording permissions.
 
 ## Подключение к Codex
 
@@ -89,9 +89,9 @@ TERMEX_NEW_BACKEND = "managed_tmux"
 
 ## Приоритет настроек и запреты
 
-CLI/config path -> env overrides -> local config -> documented defaults, но локальные security limits/allowed_apps/permissions не расширяются env из MCP. Env может сузить приложение/режим, не разрешить новые окна или снять consent. Per-call app override допускается только внутри локально разрешённого allowed set.
+Host `--config` выбирает локальный абсолютный JSON path; иначе используется путь выше. Приоритет выбора: env preferences gateway -> локальный JSON host -> documented defaults. Host применяет `TERMEX_TERMINAL`, `TERMEX_ATTACH_POLICY`, `TERMEX_NEW_BACKEND` и возвращает результат через `terminal_capabilities`. `TERMEX_TERMINAL` обязан входить в локальный `allowed_apps`; другие `TERMEX_*` сейчас отклоняются. Env не меняет `allowed_apps`, limits, clipboard/recording consent или grants. `attach_policy=new` и backend `native` являются запросом режима, а не разрешением: создание окна потребует отдельного локального grant, когда session runtime появится.
 
-Предлагаемая CLI опция --config указывает локально разрешённый absolute path; path не берётся из terminal output. Host environment whitelist не наследует все credentials агента и не переносит их в новые shell sessions. Shell окружение сохраняется по явно описанной launch policy; audit не содержит values.
+`--config` принимает только абсолютный путь при локальном запуске host; отсутствующий явно указанный файл — ошибка без fallback на defaults. Path не берётся из terminal output или MCP tool. Host environment whitelist не наследует все credentials агента и не переносит их в новые shell sessions. Shell окружение сохраняется по явно описанной launch policy; audit не содержит values.
 
 ## Doctor
 

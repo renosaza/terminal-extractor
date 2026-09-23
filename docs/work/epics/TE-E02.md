@@ -25,6 +25,6 @@ TE-C03, TE-C06, TE-C07. Без root/cloud/web dashboard и выдуманных 
 
 ## Текущее состояние
 
-TE-T005 начат после проверок SDK/tmux в TE-E01. Product SwiftPM package содержит отдельные CLI host и MCP gateway с минимальным private Unix IPC; grants/registry и GUI host ещё не реализованы. Это foundation, не готовый terminal control.
+TE-T005 и TE-T006 начаты после проверок SDK/tmux в TE-E01. Product SwiftPM package содержит отдельные CLI host и MCP gateway с private Unix IPC, локальный versioned config и read-only `terminal_capabilities` для выбранных настроек. Grants/registry и GUI host ещё не реализованы. Это foundation, не готовый terminal control.
 
 [Архитектура](../../architecture/README.md), [настройки](../../guides/configuration.md).

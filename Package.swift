@@ -17,5 +17,6 @@ let package = Package(
         .executableTarget(name: "TermexMCP", dependencies: [
             "TermexCore", .product(name: "MCP", package: "swift-sdk"),
         ]),
+        .executableTarget(name: "TermexConfigCheck", dependencies: ["TermexCore"], path: "Tests/ConfigCheck"),
     ]
 )
