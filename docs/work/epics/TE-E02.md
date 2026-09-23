@@ -25,6 +25,6 @@ TE-C03, TE-C06, TE-C07. Без root/cloud/web dashboard и выдуманных 
 
 ## Текущее состояние
 
-TE-T005..008 начаты после проверок SDK/tmux в TE-E01. Product SwiftPM package содержит отдельные CLI host и MCP gateway с private Unix IPC и проверкой peer UID, локальный versioned config и read-only `terminal_capabilities`. Host имеет локальные Ghostty и Terminal.app discovery diagnostics с проверкой выбранной строки. Grants, persistent registry и GUI host ещё не реализованы. Это foundation, не готовый terminal control.
+TE-T005..008 начаты после проверок SDK/tmux в TE-E01. Product SwiftPM package содержит отдельные CLI host и MCP gateway с private Unix IPC и проверкой peer UID, локальный versioned config и read-only `terminal_capabilities`. Host имеет локальные Ghostty и Terminal.app discovery diagnostics с проверкой выбранной строки. Core содержит in-memory модель одноразового Ghostty selection handle/session generation, пока не подключённую к host. Grants, persistent registry и GUI host ещё не реализованы. Это foundation, не готовый terminal control.
 
 [Архитектура](../../architecture/README.md), [настройки](../../guides/configuration.md).
