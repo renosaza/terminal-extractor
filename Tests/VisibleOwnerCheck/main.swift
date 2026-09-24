@@ -44,7 +44,7 @@ let screen = try manager.screenMetadata(ref)
 guard screen.columns > 0 && screen.rows > 0 else { throw CheckFailure.failed }
 
 if !selfCheck {
-    print("Temporary private tmux shell: expect \(marker), then press Ctrl-B, D. Up to 4096 bytes are captured in a private test directory; do not type secrets or other commands.")
+    print("Temporary private tmux shell: expect \(marker), then run tmux detach-client. Up to 4096 bytes are captured in a private test directory; do not type secrets or other commands.")
     fflush(stdout)
     let attach = Process()
     attach.executableURL = tmux
