@@ -118,8 +118,15 @@ public final class ManagedTmux: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         let binding = try activeBinding(ref)
-        try verify(binding)
-        _ = try run(["kill-session", "-t", binding.sessionID])
+        try checkRoot()
+        try checkSocket(allowMissing: false)
+        // tmux evaluates this format and queues kill-session on its server, so no client command
+        // can replace the pane between the identity check and close.
+        let outcome = try run(["if-shell", "-t", binding.paneID, "-F", closeCondition(binding),
+                               "display-message -p termex_closed; kill-session -t =\(binding.sessionName)",
+                               "display-message -p termex_stale_binding"])
+        guard outcome == "termex_closed\n" else { throw Failure.invalidPane }
+        try checkSocket(allowMissing: false)
         bindings[ref.id]?.active = false
     }
 
@@ -182,6 +189,10 @@ public final class ManagedTmux: @unchecked Sendable {
               parts[1].dropFirst().allSatisfy(\.isNumber),
               let pid = Int32(parts[2]), pid > 0 else { return nil }
         return (String(parts[0]), String(parts[1]), pid)
+    }
+
+    private func closeCondition(_ binding: Binding) -> String {
+        "#{&&:#{==:#{session_name},\(binding.sessionName)},#{==:#{pane_pid},\(binding.panePID)}}"
     }
 
     private func run(_ arguments: [String]) throws -> String {

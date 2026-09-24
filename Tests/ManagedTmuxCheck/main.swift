@@ -103,6 +103,8 @@ do {
     try manager.close(second)
     throw CheckFailure(name: "replaced pane process was closed through stale binding")
 } catch ManagedTmux.Failure.invalidPane {}
+let preservedPID = try panePID(secondBinding)
+try require(preservedPID == replacementPID, "stale close preserved replacement")
 try mutateFixture(["kill-session", "-t", secondBinding.sessionID])
 do {
     _ = try manager.create(SessionRef(id: UUID(), generation: 1))
@@ -110,4 +112,4 @@ do {
 } catch ManagedTmux.Failure.commandFailed {}
 catch ManagedTmux.Failure.socketCollision {}
 
-print("private_namespace=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS missing_tmux=PASS socket_collision=PASS")
+print("private_namespace=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS atomic_stale_close=PASS missing_tmux=PASS socket_collision=PASS")
