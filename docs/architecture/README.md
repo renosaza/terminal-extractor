@@ -4,7 +4,7 @@ status: draft
 ---
 # Архитектура и стек
 
-Это проект архитектуры; из схемы ниже реализована только CLI foundation host/gateway с private Unix socket и локальными настройками, без session control. Требования: [PRD](../product/prd.md). Решение по стеку: [TE-ADR-002](decisions/TE-ADR-002-stack.md).
+Это проект архитектуры; реализованы CLI foundation host/gateway с private Unix socket и локальными настройками, а также частичный private tmux namespace owner без shell, capture, GUI attach и session control. Требования: [PRD](../product/prd.md). Решение по стеку: [TE-ADR-002](decisions/TE-ADR-002-stack.md).
 
 ## Слои
 

@@ -20,6 +20,8 @@ status: draft
 
 `swift run TermexRegistryCheck` проверяет in-memory модель выбора Ghostty на синтетических ID: одноразовый handle, инвалидирование и смену session ID. Он не запрашивает macOS Automation и не выдаёт согласие. При реальном `terminal_request_access` AppKit helper показывает окна/вкладки/splits, требует явного выбора, возвращает только выбранный handle и scope; host повторно разрешает точные IDs. Результат хранится до закрытия IPC connection; read/input остаются закрыты.
 
+`swift run TermexManagedTmuxCheck` проверяет только private tmux namespace и lifecycle двух detached служебных `/bin/sleep` pane. Требуется локальный tmux (`/opt/homebrew/bin/tmux` по умолчанию, либо `TERMEX_TMUX_BIN`); тест создаёт временный каталог 0700 в `/tmp` и удаляет его после закрытия своих сессий. Он не подключает Ghostty/Terminal.app и не создаёт пользовательский shell.
+
 Аналогично для Terminal.app: `.build/debug/termex-host --list-terminal`, `python3 Tests/integration/terminal_discovery.py`, `.build/debug/termex-host --resolve-terminal <app-instance-id> <window-id> <tty>`. Если Terminal.app не запущен, список пуст и приложение не запускается. TTY может переиспользоваться: `resolve` — локальная диагностика, не право на read/input и не устойчивый session binding.
 
 Будущие области кода: session-registry, adapters/terminal-app, adapters/ghostty, adapters/tmux, shell-integration, journal, compression и host-ui. Это план модулей, не существующее продуктовое дерево.
