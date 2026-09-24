@@ -14,6 +14,7 @@ from pathlib import Path
 
 ZSH = "/bin/zsh"
 PROMPT = b"TE_PROBE_PROMPT> \x1b[?2004h"
+CONTINUATION = b"TE_PROBE_CONT> "
 
 
 def put(path, contents):
@@ -36,7 +37,8 @@ def read_until(fd, marker, timeout=4):
     return seen
 
 
-def run_shell(env, commands, login=False, final_command="exit", expected_status=0):
+def run_shell(env, commands, login=False, final_command="exit", expected_status=0,
+              after_marker=None):
     master, slave = pty.openpty()
     args = ["-zsh" if login else "zsh", "-i"]
     proc = subprocess.Popen(args, executable=ZSH, stdin=slave, stdout=slave,
@@ -46,8 +48,14 @@ def run_shell(env, commands, login=False, final_command="exit", expected_status=
     try:
         output += read_until(master, PROMPT)
         for command in commands:
+            if isinstance(command, tuple):
+                command, marker = command
+            else:
+                marker = PROMPT
             os.write(master, command.encode() + b"\n")
-            output += read_until(master, PROMPT)
+            output += read_until(master, marker)
+            if after_marker is not None:
+                after_marker(marker)
         os.write(master, final_command.encode() + b"\n")
         deadline = time.monotonic() + 4
         while proc.poll() is None and time.monotonic() < deadline:
@@ -89,6 +97,7 @@ def main():
         put(original / ".zshrc", '''
 print -r -- ".zshrc:$ZDOTDIR" >> "$TE_STARTUP_LOG"
 PROMPT='TE_PROBE_PROMPT> '
+PS2='TE_PROBE_CONT> '
 RPROMPT=''
 alias tealias='print -r -- ALIAS_OK'
 tefunction() { print -r -- FUNCTION_OK; }
@@ -194,6 +203,28 @@ ZDOTDIR=$TE_ORIGINAL_ZDOTDIR
                 < background_output.index(fg) < background_output.index(b"TEF|end|2|"))
         print(json.dumps({"case": "background_output_in_next_interval",
                           "background_within_second_fence": True}))
+        events.write_text("", encoding="utf-8")
+        def check_continuation(marker):
+            if marker == CONTINUATION:
+                pending_lines = events.read_text(encoding="utf-8").splitlines()
+                assert not any(line.startswith("start|") for line in pending_lines)
+                pending_ends = [line for line in pending_lines if line.startswith("end|")]
+                assert len(pending_ends) == 1 and pending_ends[0].startswith("end|0|")
+
+        continuation_output, _ = run_shell(env, [
+            ("print -r -- 'TE_CONT_A", CONTINUATION),
+            "TE_CONT_B'",
+        ], after_marker=check_continuation)
+        continuation_lines = events.read_text(encoding="utf-8").splitlines()
+        continuation_starts = [line for line in continuation_lines if line.startswith("start|")]
+        continuation_ends = [line for line in continuation_lines if line.startswith("end|")]
+        assert len(continuation_starts) == 2 and len(continuation_ends) == 2
+        assert "TE_CONT_A" in continuation_starts[0]
+        assert continuation_ends[1].split("|")[1] == "1" and continuation_ends[1].endswith("|0")
+        assert (continuation_output.index(CONTINUATION) < continuation_output.index(b"TEF|start|1|")
+                < continuation_output.index(b"TEF|end|1|"))
+        print(json.dumps({"case": "continuation_before_command_start",
+                          "continuation_before_start_fence": True}))
 
 
 if __name__ == "__main__":
