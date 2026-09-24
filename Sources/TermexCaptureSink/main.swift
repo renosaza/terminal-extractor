@@ -8,10 +8,20 @@ func info(_ path: String) -> stat? {
     return lstat(path, &value) == 0 ? value : nil
 }
 
-func create(_ path: String) throws {
+func create(_ path: String, contents: String = "") throws {
     let fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
     guard fd >= 0 else { throw SinkFailure.createFailed }
-    close(fd)
+    let bytes = Array(contents.utf8)
+    var written = 0
+    while written < bytes.count {
+        let count = bytes.withUnsafeBytes { write(fd, $0.baseAddress!.advanced(by: written), bytes.count - written) }
+        guard count > 0 else {
+            _ = close(fd)
+            throw SinkFailure.createFailed
+        }
+        written += count
+    }
+    guard close(fd) == 0 else { throw SinkFailure.createFailed }
 }
 
 func validate(_ paths: [String]) throws {
@@ -29,10 +39,12 @@ func sink(paths: [String], limit: Int) throws {
     let segment = paths[0]
     let fd = open(segment, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
     guard fd >= 0 else { throw SinkFailure.createFailed }
-    defer { close(fd) }
-    try create(paths[1])
+    var closed = false
+    defer { if !closed { _ = close(fd) } }
+    try create(paths[1], contents: String(getpid()))
     var written = 0
     var lost = false
+    var gapAttempted = false
     var buffer = [UInt8](repeating: 0, count: 8192)
     while true {
         let count = read(STDIN_FILENO, &buffer, buffer.count)
@@ -49,9 +61,15 @@ func sink(paths: [String], limit: Int) throws {
             offset += result
         }
         if offset < count { lost = true }
-        if lost { try? create(paths[2]) }
+        if lost && !gapAttempted {
+            gapAttempted = true
+            try? create(paths[2])
+        }
     }
-    if !lost { try create(paths[3]) }
+    let flushResult = lost ? 0 : fsync(fd)
+    let closeResult = close(fd)
+    closed = true
+    if !lost && flushResult == 0 && closeResult == 0 { try create(paths[3]) }
 }
 
 do {

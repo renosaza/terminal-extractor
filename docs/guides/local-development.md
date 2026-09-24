@@ -20,7 +20,7 @@ status: draft
 
 `swift run TermexRegistryCheck` проверяет in-memory модель выбора Ghostty на синтетических ID: одноразовый handle, инвалидирование и смену session ID. Он не запрашивает macOS Automation и не выдаёт согласие. При реальном `terminal_request_access` AppKit helper показывает окна/вкладки/splits, требует явного выбора, возвращает только выбранный handle и scope; host повторно разрешает точные IDs. Результат хранится до закрытия IPC connection; read/input остаются закрыты.
 
-`swift run TermexManagedTmuxCheck` проверяет только private tmux namespace и lifecycle двух detached служебных `/bin/sleep` pane. Требуется локальный tmux (`/opt/homebrew/bin/tmux` по умолчанию, либо `TERMEX_TMUX_BIN`); тест создаёт временный каталог 0700 в `/tmp` и удаляет его после закрытия своих сессий. Он не подключает Ghostty/Terminal.app и не создаёт пользовательский shell.
+`swift build --product termex-capture-sink`, затем `swift run TermexManagedTmuxCheck` проверяют private tmux namespace, capture gate/metadata, synthetic workload и lifecycle detached fixture panes. `swift run TermexCaptureSinkCheck` отдельно проверяет synthetic bytes, quota gap и clean EOF sink. Требуется локальный tmux (`/opt/homebrew/bin/tmux` по умолчанию, либо `TERMEX_TMUX_BIN`); тест создаёт временный каталог 0700 в `/tmp` и удаляет его после закрытия своих сессий. Он не подключает Ghostty/Terminal.app и не создаёт пользовательскую сессию.
 
 `python3 probes/tmux/bounded_capture.py` проверяет отдельный private `pipe-pane -O`: marker готовности до синтетического workload, точный byte corpus и gap при квоте. Данные fixture не выводятся; это не product recorder, не захват выбранной Ghostty pane и не доказательство непрерывного журнала.
 

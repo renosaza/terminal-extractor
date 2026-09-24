@@ -30,6 +30,8 @@ func fixture(_ input: Data, limit: Int, gap: Bool) throws {
     process.waitUntilExit()
     try require(process.terminationStatus == 0, "sink exit")
     try require(FileManager.default.fileExists(atPath: paths[1].path), "ready marker")
+    let readyPID = try String(contentsOf: paths[1], encoding: .utf8)
+    try require(Int32(readyPID) != nil, "ready sink PID")
     let segment = try Data(contentsOf: paths[0])
     try require(segment == input.prefix(limit), "exact segment bytes")
     try require(FileManager.default.fileExists(atPath: paths[2].path) == gap, "gap marker")
