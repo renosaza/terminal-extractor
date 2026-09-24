@@ -190,6 +190,23 @@ let neighborPID = try panePID(secondBinding)
 try require(neighborPID == secondPID, "neighbor PID after launch")
 try mutateFixture(["kill-session", "-t", workloadBinding.sessionID])
 
+let staleLaunch = SessionRef(id: UUID(), generation: 1)
+let staleLaunchBinding = try manager.create(staleLaunch)
+let staleLaunchGate = try manager.armCapture(staleLaunch, sinkExecutable: sink, maxBytes: 64)
+try mutateFixture(["respawn-pane", "-k", "-t", staleLaunchBinding.paneID, "/bin/sleep", "3600"])
+let staleLaunchPID = try panePID(staleLaunchBinding)
+try require(staleLaunchPID != String(staleLaunchBinding.panePID), "stale launch fixture changed pane PID")
+do {
+    _ = try manager.launchCapturedProcess(staleLaunch, gate: staleLaunchGate,
+                                          executableURL: URL(fileURLWithPath: "/bin/sleep"), arguments: ["3600"])
+    throw CheckFailure(name: "launch accepted replaced placeholder")
+} catch ManagedTmux.Failure.invalidPane {}
+let preservedStaleLaunchPID = try panePID(staleLaunchBinding)
+let neighborAfterStaleLaunch = try panePID(secondBinding)
+try require(preservedStaleLaunchPID == staleLaunchPID, "rejected launch preserved replacement")
+try require(neighborAfterStaleLaunch == secondPID, "rejected launch preserved neighbor")
+try mutateFixture(["kill-session", "-t", staleLaunchBinding.sessionID])
+
 let shellRef = SessionRef(id: UUID(), generation: 1)
 let shellPlaceholder = try manager.create(shellRef)
 let captureDirsBeforeShell = Set(try FileManager.default.contentsOfDirectory(atPath: root.path)
@@ -419,4 +436,4 @@ try failureManager.close(beforeRef)
 let peerAfterPlaceholderClose = try failureManager.revalidate(failurePeer)
 try require(peerAfterPlaceholderClose == failurePeerBinding, "peer survived exact placeholder close")
 
-print("private_namespace=PASS capture_gate=PASS synthetic_workload=PASS capture_observation=PASS owner_quota_gap=PASS dead_sink_detection=PASS guarded_launch=PASS private_shell_state=PASS private_shell_exit=PASS no_arg_rejected=PASS pipe_replacement=PASS foreign_pipe=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS atomic_stale_close=PASS lost_ack_quarantine=PASS pre_dispatch_quarantine=PASS healthy_anchor=PASS missing_tmux=PASS socket_collision=PASS")
+print("private_namespace=PASS capture_gate=PASS synthetic_workload=PASS capture_observation=PASS owner_quota_gap=PASS dead_sink_detection=PASS guarded_launch=PASS stale_pid_launch=PASS private_shell_state=PASS private_shell_exit=PASS no_arg_rejected=PASS pipe_replacement=PASS foreign_pipe=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS atomic_stale_close=PASS lost_ack_quarantine=PASS pre_dispatch_quarantine=PASS healthy_anchor=PASS missing_tmux=PASS socket_collision=PASS")
