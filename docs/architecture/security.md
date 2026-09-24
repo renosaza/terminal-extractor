@@ -26,7 +26,7 @@ Read и control выдаются отдельно; close и clipboard export —
 
 Нельзя обещать автоматический отзыв при любом физическом нажатии клавиши без фактического input event source. Baseline — надёжное **явное** локальное Take control/Stop, не незаметный global event tap. Управление человеком всегда может быть возвращено вне MCP, даже если модель/компрессор зависли.
 
-Revoke сначала атомарно увеличивает lease/grant epoch и блокирует новые dispatch, затем отменяет очередь и cleanup. Не ждать долгого Apple Event/Headroom. Уже переданные bytes и уже запущенную команду не отзывают; emergency interrupt — отдельное действие пользователя, не default kill. После revoke hidden queued input никогда не возобновляется.
+Общий контракт revoke должен блокировать новые dispatch до подтверждения пользователю, затем отменять очередь и выполнять cleanup. В текущем foundation Stop отключает текущие gateway sockets, повышает grant epoch и только после этого подтверждает отзыв; новые клиенты должны пройти локальное согласие. Это не ждёт долгого Apple Event/Headroom. Уже помещённые в socket bytes могут быть дочитаны после подтверждения; начатое действие Ghostty может завершиться локально, но не даёт нового MCP-ответа по отозванному grant. Уже запущенную команду не отзывают; emergency interrupt — отдельное действие пользователя, не default kill. После revoke hidden queued input никогда не возобновляется.
 
 ## Privacy mode
 
@@ -38,7 +38,7 @@ Default diagnostics — IDs, durations, versions, state transitions, counts; б�
 
 ## Native export risks
 
-Ghostty clipboard bridge использует только `write_screen_file:copy` на точной surface после отдельного локального согласия. Clipboard backup — только локальная память host, не tool output. Путь проверяется как единственный новый export directory за вызов; файл открывается через private temp directory FD с `O_NOFOLLOW`, owner/mode/size/birthtime/fstat checks. На конфликт fail closed; обнаружение чужого файла не даёт прав агенту его читать. Выдача ограничена 16 KiB, одним вызовом за 5 секунд и 64 за жизнь host для одного app instance из-за утечки FD в установленном Ghostty 1.3.1. Clipboard restore использует changeCount/path, но atomic CAS нет; сторонний writer или watcher остаётся остаточным риском. Реальный concurrent export и deferred clipboard provider ещё не проверены.
+Ghostty clipboard bridge использует только `write_screen_file:copy` на точной surface после отдельного локального согласия. Clipboard backup — только локальная память host, не tool output. Путь проверяется как единственный новый export directory за вызов; файл открывается через private temp directory FD с `O_NOFOLLOW`, owner/mode/size/birthtime/fstat checks. На конфликт fail closed; обнаружение чужого файла не даёт прав агенту его читать. Выдача ограничена 16 KiB, одним вызовом за 5 секунд и 64 за жизнь host для одного app instance из-за утечки FD в установленном Ghostty 1.3.1. Clipboard restore использует changeCount/path, но atomic CAS нет; сторонний writer или watcher остаётся остаточным риском. Синтетический тест проверил ранний конфликт и отзыв во время export; поздняя конкурентная запись, реальный concurrent export и deferred clipboard provider ещё не проверены.
 
 ## Недоверенный terminal output
 
