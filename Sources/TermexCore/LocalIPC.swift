@@ -174,7 +174,10 @@ public enum LocalIPC {
     public static func writeFrame(_ data: Data, to fd: Int32) throws {
         guard !data.isEmpty && data.count <= maxFrame else { throw Failure.invalidFrame }
         let length = UInt32(data.count)
-        let header = Data([UInt8(length >> 24), UInt8(length >> 16), UInt8(length >> 8), UInt8(length)])
+        let header = Data([UInt8(truncatingIfNeeded: length >> 24),
+                           UInt8(truncatingIfNeeded: length >> 16),
+                           UInt8(truncatingIfNeeded: length >> 8),
+                           UInt8(truncatingIfNeeded: length)])
         let deadline = DispatchTime.now().uptimeNanoseconds + 5_000_000_000
         for part in [header, data] {
             try part.withUnsafeBytes { buffer in
