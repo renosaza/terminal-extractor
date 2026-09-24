@@ -226,7 +226,34 @@ let shellVerified = try manager.revalidate(shellRef)
 try require(shellVerified == shellBinding, "private shell binding after commands")
 let neighborAfterShell = try panePID(secondBinding)
 try require(neighborAfterShell == secondPID, "neighbor PID after private shell")
-try manager.close(shellRef)
+try mutateFixture(["send-keys", "-l", "-t", shellBinding.paneID, "exit"])
+try mutateFixture(["send-keys", "-t", shellBinding.paneID, "Enter"])
+var shellPaneGone = false
+for _ in 0..<150 {
+    if (try? panePID(shellBinding)) == nil { shellPaneGone = true; break }
+    usleep(20_000)
+}
+try require(shellPaneGone, "private shell pane exited")
+do {
+    _ = try manager.revalidate(shellRef)
+    throw CheckFailure(name: "exited shell retained valid binding")
+} catch ManagedTmux.Failure.commandFailed {}
+catch ManagedTmux.Failure.invalidPane {}
+do {
+    _ = try manager.captureObservation(shellRef, gate: shellGate)
+    throw CheckFailure(name: "exited shell reported live capture")
+} catch ManagedTmux.Failure.commandFailed {}
+catch ManagedTmux.Failure.invalidPane {}
+do {
+    try manager.close(shellRef)
+    throw CheckFailure(name: "exited shell was closed as live pane")
+} catch ManagedTmux.Failure.commandFailed {}
+catch ManagedTmux.Failure.invalidPane {}
+let neighborAfterExit = try panePID(secondBinding)
+try require(neighborAfterExit == secondPID, "neighbor survived private shell exit")
+let afterExit = SessionRef(id: UUID(), generation: 1)
+_ = try manager.create(afterExit)
+try manager.close(afterExit)
 
 try mutateFixture(["pipe-pane", "-O", "-t", secondBinding.paneID, "sleep 60"])
 var foreignPipePID: String?
@@ -366,4 +393,4 @@ try failureManager.close(beforeRef)
 let peerAfterPlaceholderClose = try failureManager.revalidate(failurePeer)
 try require(peerAfterPlaceholderClose == failurePeerBinding, "peer survived exact placeholder close")
 
-print("private_namespace=PASS capture_gate=PASS synthetic_workload=PASS capture_observation=PASS owner_quota_gap=PASS guarded_launch=PASS private_shell_state=PASS no_arg_rejected=PASS pipe_replacement=PASS foreign_pipe=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS atomic_stale_close=PASS lost_ack_quarantine=PASS pre_dispatch_quarantine=PASS healthy_anchor=PASS missing_tmux=PASS socket_collision=PASS")
+print("private_namespace=PASS capture_gate=PASS synthetic_workload=PASS capture_observation=PASS owner_quota_gap=PASS guarded_launch=PASS private_shell_state=PASS private_shell_exit=PASS no_arg_rejected=PASS pipe_replacement=PASS foreign_pipe=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS atomic_stale_close=PASS lost_ack_quarantine=PASS pre_dispatch_quarantine=PASS healthy_anchor=PASS missing_tmux=PASS socket_collision=PASS")
