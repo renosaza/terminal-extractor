@@ -178,6 +178,22 @@ ZDOTDIR=$TE_ORIGINAL_ZDOTDIR
         print(json.dumps({"case": "exit_without_hook_end", "starts": len(exit_starts),
                           "ends": len(exit_ends), "hook_end_for_exit": False,
                           "fixture_process_status": exit_status}))
+        events.write_text("", encoding="utf-8")
+        env["TE_BG_RELEASE"] = str(root / "bg-release")
+        env["TE_BG_MARK"] = f"TE_BG_{nonce}"
+        env["TE_FG_MARK"] = f"TE_FG_{nonce}"
+        background_output, _ = run_shell(env, [
+            '(for i in {1..400}; do [[ -e "$TE_BG_RELEASE" ]] && break; sleep 0.01; done; '
+            '[[ -e "$TE_BG_RELEASE" ]] && print -r -- "$TE_BG_MARK") &',
+            ': > "$TE_BG_RELEASE"; wait; print -r -- "$TE_FG_MARK"',
+        ])
+        bg = env["TE_BG_MARK"].encode()
+        fg = env["TE_FG_MARK"].encode()
+        assert background_output.count(bg) == background_output.count(fg) == 1
+        assert (background_output.index(b"TEF|start|2|") < background_output.index(bg)
+                < background_output.index(fg) < background_output.index(b"TEF|end|2|"))
+        print(json.dumps({"case": "background_output_in_next_interval",
+                          "background_within_second_fence": True}))
 
 
 if __name__ == "__main__":
