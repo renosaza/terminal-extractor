@@ -1,8 +1,14 @@
 import AppKit
 import Foundation
 
-/// Serialized, bounded one-shot screen export. Ghostty 1.3.1 leaks directory FDs per action.
+/// Serialized, bounded one-shot Ghostty export. Ghostty 1.3.1 leaks directory FDs per action.
 public enum GhosttyScreenExport {
+    public enum View: String {
+        case screen, scrollback
+
+        var filename: String { self == .screen ? "screen.txt" : "history.txt" }
+        var action: String { self == .screen ? "write_screen_file:copy" : "write_scrollback_file:copy" }
+    }
     public enum Failure: Error { case clipboardUnavailable, clipboardConflict, unavailable, rateLimited }
     public struct Snapshot {
         public let text: String
@@ -16,16 +22,18 @@ public enum GhosttyScreenExport {
     }
     private static let state = State()
 
-    public static func read(_ target: GhosttyTarget, authorized: () -> Bool) throws -> Snapshot {
+    public static func read(_ target: GhosttyTarget, view: View = .screen,
+                            authorized: () -> Bool) throws -> Snapshot {
         try readForExport(appInstanceID: target.appInstanceID, board: .general,
                           root: (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath,
-                          authorized: authorized) {
-            try GhosttyDiscovery.exportScreen(target)
+                          view: view, authorized: authorized) {
+            try GhosttyDiscovery.export(target, view: view)
         }
     }
 
     package static func readForExport(appInstanceID: String, board: NSPasteboard, root: String,
-                                      authorized: () -> Bool, export: () throws -> Void) throws -> Snapshot {
+                                      view: View = .screen, authorized: () -> Bool,
+                                      export: () throws -> Void) throws -> Snapshot {
         state.lock.lock()
         defer { state.lock.unlock() }
         let now = DispatchTime.now().uptimeNanoseconds
@@ -61,7 +69,7 @@ public enum GhosttyScreenExport {
             }
             return item
         }
-        let beforeDirectories = try exportDirectories(in: root)
+        let beforeDirectories = try exportDirectories(in: root, view: view)
         guard board.changeCount == before else { throw Failure.clipboardConflict }
         guard authorized() else { throw Failure.unavailable }
         guard board.changeCount == before else { throw Failure.clipboardConflict }
@@ -74,10 +82,10 @@ public enum GhosttyScreenExport {
         guard after != before, let path = board.string(forType: .string) else {
             throw Failure.clipboardConflict
         }
-        guard GhosttyExportFile.matchesExpectedPath(path, in: root) else {
+        guard GhosttyExportFile.matchesExpectedPath(path, in: root, view: view) else {
             throw Failure.clipboardConflict
         }
-        let newDirectories = Result { try exportDirectories(in: root).subtracting(beforeDirectories) }
+        let newDirectories = Result { try exportDirectories(in: root, view: view).subtracting(beforeDirectories) }
         guard board.changeCount == after, board.string(forType: .string) == path else {
             throw Failure.clipboardConflict
         }
@@ -89,7 +97,7 @@ public enum GhosttyScreenExport {
         guard created.count == 1, created.contains(URL(fileURLWithPath: path).deletingLastPathComponent().lastPathComponent) else {
             throw Failure.clipboardConflict
         }
-        let bytes = try GhosttyExportFile.read(path, in: root, createdAfter: started)
+        let bytes = try GhosttyExportFile.read(path, in: root, createdAfter: started, view: view)
         let text = String(decoding: bytes, as: UTF8.self).unicodeScalars.filter {
             $0 == "\n" || $0 == "\t" ||
                 (!CharacterSet.controlCharacters.contains($0) && $0.properties.generalCategory != .format)
@@ -97,9 +105,10 @@ public enum GhosttyScreenExport {
         return Snapshot(text: String(String.UnicodeScalarView(text)), observedAt: observedAt)
     }
 
-    private static func exportDirectories(in root: String) throws -> Set<String> {
+    private static func exportDirectories(in root: String, view: View) throws -> Set<String> {
         let names = try FileManager.default.contentsOfDirectory(atPath: root)
         guard names.count <= 10_000 else { throw Failure.unavailable }
-        return Set(names.filter { GhosttyExportFile.matchesExpectedPath(root + "/" + $0 + "/screen.txt", in: root) })
+        return Set(names.filter { GhosttyExportFile.matchesExpectedPath(root + "/" + $0 + "/" + view.filename,
+                                                                        in: root, view: view) })
     }
 }

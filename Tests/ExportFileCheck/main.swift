@@ -21,10 +21,19 @@ defer { free(canonical) }
 let alias = String(cString: canonical) + "/" + directory.lastPathComponent + "/screen.txt"
 let aliasContents = try GhosttyExportFile.read(alias, in: root.path, createdAfter: start)
 assert(aliasContents == contents)
+let history = directory.appendingPathComponent("history.txt")
+try Data("retained history".utf8).write(to: history)
+assert(chmod(history.path, 0o600) == 0)
+let historyContents = try GhosttyExportFile.read(history.path, in: root.path, createdAfter: start,
+                                                view: .scrollback)
+assert(historyContents == Data("retained history".utf8))
+assert(!GhosttyExportFile.matchesExpectedPath(history.path, in: root.path))
+assert(!GhosttyExportFile.matchesExpectedPath(file.path, in: root.path, view: .scrollback))
 
-func rejected(_ path: String, since: Date = start) {
+func rejected(_ path: String, since: Date = start,
+              view: GhosttyScreenExport.View = .screen) {
     do {
-        _ = try GhosttyExportFile.read(path, in: root.path, createdAfter: since)
+        _ = try GhosttyExportFile.read(path, in: root.path, createdAfter: since, view: view)
         fatalError("unsafe export path was accepted")
     } catch GhosttyExportFile.Failure.invalidPath,
             GhosttyExportFile.Failure.invalidFile,
@@ -34,6 +43,8 @@ func rejected(_ path: String, since: Date = start) {
 
 rejected("/etc/passwd")
 rejected(directory.appendingPathComponent("../../screen.txt").path)
+rejected(history.path)
+rejected(file.path, view: .scrollback)
 rejected(file.path, since: Date(timeIntervalSinceNow: 30))
 assert(chmod(directory.path, 0o777) == 0)
 rejected(file.path)
@@ -47,4 +58,12 @@ assert(fd >= 0)
 assert(ftruncate(fd, off_t(GhosttyExportFile.maxBytes + 1)) == 0)
 Darwin.close(fd)
 rejected(file.path)
-print("fresh_private_file=PASS path_escape=PASS stale=PASS symlink=PASS oversize=PASS")
+let historyFD = open(history.path, O_WRONLY)
+assert(historyFD >= 0)
+assert(ftruncate(historyFD, off_t(GhosttyExportFile.maxBytes + 1)) == 0)
+Darwin.close(historyFD)
+do {
+    _ = try GhosttyExportFile.read(history.path, in: root.path, createdAfter: start, view: .scrollback)
+    fatalError("oversized history was accepted")
+} catch GhosttyExportFile.Failure.tooLarge {}
+print("fresh_private_file=PASS history_file=PASS wrong_basename=PASS path_escape=PASS stale=PASS symlink=PASS oversize=PASS")

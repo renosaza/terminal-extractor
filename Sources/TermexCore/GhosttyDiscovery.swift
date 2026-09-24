@@ -49,7 +49,7 @@ public enum GhosttyDiscovery {
         return choice
     }
 
-    static func exportScreen(_ target: GhosttyTarget) throws {
+    static func export(_ target: GhosttyTarget, view: GhosttyScreenExport.View) throws {
         guard let reader = try AppleEventReader(bundleID: "com.mitchellh.ghostty"),
               reader.instanceID == target.appInstanceID else { throw Failure.notFound }
         var matches: [NSAppleEventDescriptor] = []
@@ -65,7 +65,7 @@ public enum GhosttyDiscovery {
         }
         guard matches.count == 1 else { throw Failure.notFound }
         try reader.checkInstance()
-        guard try reader.performAction("write_screen_file:copy", on: matches[0]) else {
+        guard try reader.performAction(view.action, on: matches[0]) else {
             throw Failure.notFound
         }
         try reader.checkInstance()

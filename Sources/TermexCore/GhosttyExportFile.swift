@@ -1,15 +1,16 @@
 import Darwin
 import Foundation
 
-/// Accept only a newly created Ghostty screen file inside this user's private temp directory.
+/// Accept only a newly created Ghostty export file inside this user's private temp directory.
 public enum GhosttyExportFile {
     public enum Failure: Error { case invalidPath, invalidFile, tooLarge, system(Int32) }
     public static let maxBytes = 16 * 1024
 
     public static func read(_ path: String, in temporaryRoot: String,
-                            createdAfter start: Date) throws -> Data {
+                            createdAfter start: Date,
+                            view: GhosttyScreenExport.View = .screen) throws -> Data {
         let root = temporaryRoot.hasSuffix("/") ? String(temporaryRoot.dropLast()) : temporaryRoot
-        guard let directoryName = directoryName(for: path, in: root) else { throw Failure.invalidPath }
+        guard let directoryName = directoryName(for: path, in: root, view: view) else { throw Failure.invalidPath }
 
         let rootFD = open(root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         guard rootFD >= 0 else { throw Failure.system(errno) }
@@ -30,17 +31,17 @@ public enum GhosttyExportFile {
             throw Failure.invalidPath
         }
 
-        let fd = openat(dirFD, "screen.txt", O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        let fd = openat(dirFD, view.filename, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
         guard fd >= 0 else { throw Failure.invalidFile }
         defer { Darwin.close(fd) }
         var before = stat()
         guard fstat(fd, &before) == 0, before.st_uid == geteuid(),
               before.st_mode & S_IFMT == S_IFREG, before.st_mode & 0o077 == 0,
               before.st_nlink == 1, before.st_size >= 0,
-              before.st_size <= maxBytes,
               born(before, after: start) else {
             throw Failure.invalidFile
         }
+        guard before.st_size <= maxBytes else { throw Failure.tooLarge }
         var data = Data(count: Int(before.st_size))
         let count = data.count
         try data.withUnsafeMutableBytes { bytes in
@@ -63,11 +64,13 @@ public enum GhosttyExportFile {
         return data
     }
 
-    public static func matchesExpectedPath(_ path: String, in temporaryRoot: String) -> Bool {
-        directoryName(for: path, in: temporaryRoot) != nil
+    public static func matchesExpectedPath(_ path: String, in temporaryRoot: String,
+                                           view: GhosttyScreenExport.View = .screen) -> Bool {
+        directoryName(for: path, in: temporaryRoot, view: view) != nil
     }
 
-    private static func directoryName(for path: String, in temporaryRoot: String) -> String? {
+    private static func directoryName(for path: String, in temporaryRoot: String,
+                                      view: GhosttyScreenExport.View) -> String? {
         let root = temporaryRoot.hasSuffix("/") ? String(temporaryRoot.dropLast()) : temporaryRoot
         var prefix = root
         if !path.hasPrefix(root + "/") {
@@ -77,7 +80,7 @@ public enum GhosttyExportFile {
             guard path.hasPrefix(prefix + "/") else { return nil }
         }
         let parts = path.dropFirst(prefix.count + 1).split(separator: "/", omittingEmptySubsequences: false)
-        guard parts.count == 2, parts[1] == "screen.txt", parts[0].utf8.count == 22,
+        guard parts.count == 2, parts[1] == Substring(view.filename), parts[0].utf8.count == 22,
               parts[0].utf8.allSatisfy({
                   (65...90).contains($0) || (97...122).contains($0) ||
                   (48...57).contains($0) || $0 == 45 || $0 == 95

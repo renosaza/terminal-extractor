@@ -101,7 +101,34 @@ nonisolated func run() throws {
     } catch GhosttyScreenExport.Failure.clipboardConflict {
         precondition(board.value.string(forType: .string) == "writer")
     }
-    print("revoked_during_export=PASS writer_conflict=PASS")
+    Thread.sleep(forTimeInterval: 5.1)
+    board.value.clearContents()
+    precondition(board.value.setString("original", forType: .string))
+    do {
+        _ = try GhosttyScreenExport.readForExport(appInstanceID: "synthetic-alternate", board: board.value,
+                                                 root: root.path, view: .scrollback,
+                                                 authorized: { true }, export: {})
+        fatalError("scrollback without path was accepted")
+    } catch GhosttyScreenExport.Failure.clipboardConflict {
+        precondition(board.value.string(forType: .string) == "original")
+    }
+
+    Thread.sleep(forTimeInterval: 5.1)
+    let historyDirectory = root.appendingPathComponent("ABCDEFGHIJKLMNOPQRSTUX")
+    let historyPath = historyDirectory.appendingPathComponent("history.txt")
+    let snapshot = try GhosttyScreenExport.readForExport(appInstanceID: "synthetic-history", board: board.value,
+                                                         root: root.path, view: .scrollback,
+                                                         authorized: { true }) {
+        try FileManager.default.createDirectory(at: historyDirectory, withIntermediateDirectories: false,
+                                                attributes: [.posixPermissions: 0o755])
+        try Data("retained history".utf8).write(to: historyPath)
+        precondition(chmod(historyPath.path, 0o600) == 0)
+        board.value.clearContents()
+        precondition(board.value.setString(historyPath.path, forType: .string))
+    }
+    precondition(snapshot.text == "retained history")
+    precondition(board.value.string(forType: .string) == "original")
+    print("revoked_during_export=PASS writer_conflict=PASS alternate_no_path=PASS history_export=PASS")
 }
 
 try run()
