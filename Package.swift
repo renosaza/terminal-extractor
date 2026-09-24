@@ -21,5 +21,6 @@ let package = Package(
         ]),
         .executableTarget(name: "TermexConfigCheck", dependencies: ["TermexCore"], path: "Tests/ConfigCheck"),
         .executableTarget(name: "TermexRegistryCheck", dependencies: ["TermexCore"], path: "Tests/RegistryCheck"),
+        .executableTarget(name: "TermexManagedTmuxCheck", dependencies: ["TermexCore"], path: "Tests/ManagedTmuxCheck"),
     ]
 )
