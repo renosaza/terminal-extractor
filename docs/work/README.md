@@ -35,11 +35,13 @@ status: draft
 
 **M4 — продуктовая поставка.** Реальный GUI acceptance на обоих приложениях, signing/install/uninstall, версия-зависимая документация, release audit. Публиковать ограниченный релиз можно только с точным перечнем unsupported capabilities; он не закрывает невыполненные требования полного Existing.
 
+Для PR #6 положительный retained scrollback на контролируемой Ghostty pane и живой Stop при незавершённом screen request после появления export file проверены с отдельным локальным согласием. Это не доказывает полноту истории, причину прежних отказов без clipboard path или пересечение Stop с ещё выполняющимся Apple Event. Следующие независимые gates: managed shared-pane capture и command evidence (TE-T017/019/021/025/041), необходимые для достоверного exit status, пока native snapshot даёт только текст. Managed-путь не закрывает требования к уже видимой native-сессии; Terminal.app no-Enter/input и Ghostty input остаются отдельными. MCP read/status и двухклиентная приёмка следуют за реальным command/journal evidence, а не за одними схемами.
+
 ## Параллельная работа
 
 После M0 допустимы независимые writers: Terminal.app adapter, Ghostty adapter, core/journal, shell integration и MCP schemas. Общие schema/registry файлы имеют одного владельца; интерфейсы согласуются до параллельной реализации. Compression начинается после нормализованного output contract, packaging — после решения по host identity/TCC. Security design входит с начала, а не добавляется после API.
 
-Точная DAG хранится в `depends_on` карточек. Последовательность критического пути проходит feasibility -> core/identity -> app bindings + managed capture -> command/journal -> MCP -> integrated acceptance -> release audit. Это порядок зависимостей, не обещание календарных сроков.
+Точная DAG хранится в `depends_on` карточек. Последовательность критического пути проходит feasibility -> core/identity и локальные grants/Stop -> app bindings + managed capture -> доказательные command/journal reads -> MCP -> реальные GUI/race checks -> integrated acceptance -> release audit. Optional Headroom не блокирует builtin fidelity/retrieval gate. Это порядок зависимостей, не обещание календарных сроков.
 
 ## Работа с карточкой
 

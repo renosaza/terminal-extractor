@@ -72,7 +72,7 @@ def gateway(path, preferences=None, request_access=False):
         process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}) + "\n")
         process.stdin.flush()
         listed = json.loads(process.stdout.readline())
-        assert [tool["name"] for tool in listed["result"]["tools"]] == ["terminal_capabilities", "terminal_request_access"], listed
+        assert [tool["name"] for tool in listed["result"]["tools"]] == ["terminal_capabilities", "terminal_request_access", "terminal_release", "terminal_screen"], listed
         process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
             "name": "terminal_capabilities", "arguments": {}}}) + "\n")
         process.stdin.flush()
@@ -84,6 +84,34 @@ def gateway(path, preferences=None, request_access=False):
             "new_session_backend": (preferences or {}).get("TERMEX_NEW_BACKEND", "managed_tmux"),
         }
         assert capability == expected, capability
+        process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {
+            "name": "terminal_screen", "arguments": {
+                "session_id": "11111111-1111-4111-8111-111111111111", "generation": 1}}}) + "\n")
+        process.stdin.flush()
+        assert json.loads(process.stdout.readline())["result"]["isError"] is True
+        for view in ["scrollback", "invalid", True]:
+            process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {
+                "name": "terminal_screen", "arguments": {
+                    "session_id": "11111111-1111-4111-8111-111111111111", "generation": 1,
+                    "view": view}}}) + "\n")
+            process.stdin.flush()
+            assert json.loads(process.stdout.readline())["result"]["isError"] is True
+        target = {"session_id": "11111111-1111-4111-8111-111111111111", "generation": 1, "request_id": "release-1"}
+        invalid_releases = [
+            {}, {**target, "session_id": "invalid"}, {**target, "generation": 0},
+            {**target, "generation": True}, {**target, "request_id": ""},
+            {**target, "request_id": "x" * 129}, {**target, "extra": True},
+        ]
+        for release_index, arguments in enumerate(invalid_releases + [target, target, {**target, "generation": 2}]):
+            process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {
+                "name": "terminal_release", "arguments": arguments}}) + "\n")
+            process.stdin.flush()
+            result = json.loads(process.stdout.readline())["result"]
+            assert result["isError"] is True, result
+            if release_index in [len(invalid_releases), len(invalid_releases) + 1]:
+                assert result["structuredContent"] == {**target, "status": "denied"}, result
+            elif release_index == len(invalid_releases) + 2:
+                assert result["structuredContent"]["status"] == "idempotency_conflict", result
         if request_access:
             process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
                 "name": "terminal_request_access", "arguments": {}}}) + "\n")
@@ -141,6 +169,16 @@ with tempfile.TemporaryDirectory(prefix="termex-ipc-") as temporary:
         assert exchange(path, b'{"op":"ping","clientInfo":{"name":"trusted"}}') == {"ok": False}
         assert exchange(path, b'{"op":"ping"}') == {"ok": True}
         assert exchange(path, b'{"op":"access_status"}') == {"sessions": []}
+        assert exchange(path, b'{"op":"read_ghostty_screen","session_id":"11111111-1111-4111-8111-111111111111","generation":1,"grant_token":"22222222-2222-4222-8222-222222222222"}') == {"ok": False}
+        for invalid_view in [None, True, "invalid"]:
+            payload = json.dumps({"op": "read_ghostty_screen", "session_id": "11111111-1111-4111-8111-111111111111",
+                                  "generation": 1, "grant_token": "22222222-2222-4222-8222-222222222222",
+                                  "view": invalid_view}).encode()
+            assert exchange(path, payload) == {"ok": False}
+        for invalid_generation in [True, 1.0, 1.5]:
+            payload = json.dumps({"op": "release_session", "session_id": "11111111-1111-4111-8111-111111111111",
+                                  "generation": invalid_generation, "grant_token": "22222222-2222-4222-8222-222222222222"}).encode()
+            assert exchange(path, payload) == {"ok": False}
         first_stop = stop(path)
         second_stop = stop(path)
         assert first_stop == {"stopped": True, "epoch": 1}, first_stop
@@ -184,9 +222,19 @@ with tempfile.TemporaryDirectory(prefix="termex-ipc-") as temporary:
                 excess.connect(path)
                 assert excess.recv(1) == b"", "ninth client was not rejected"
             assert stop(path) == {"stopped": True, "epoch": 5}, "Stop was blocked by eight clients"
+            for connection in holders:
+                assert connection.recv(1) == b"", "Stop left a client connected"
         finally:
             for connection in holders:
                 connection.close()
+        with socket.socket(socket.AF_UNIX) as active:
+            active.settimeout(5)
+            active.connect(path)
+            active.sendall(struct.pack("!I", 16) + b"x")
+            started = time.monotonic()
+            assert stop(path) == {"stopped": True, "epoch": 6}
+            assert time.monotonic() - started < 3, "partial request delayed Stop"
+            assert active.recv(1) == b"", "Stop left an active client connected"
         for attempt in range(20):
             try:
                 assert exchange(path, b'{"op":"ping"}') == {"ok": True}

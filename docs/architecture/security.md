@@ -16,7 +16,7 @@ Private Unix socket с проверкой owner/mode и peer identity; GUI broke
 
 App/helper signature и audit identity должны быть стабильны между обновлениями. First-run TCC выполняется только через стандартный macOS prompt; отказ не обходится. Запрашивать Automation для выбранных приложений. Accessibility требовать лишь для проверенного optional AX-read path, не по умолчанию для core. Screen Recording и full desktop keylogger не требуются.
 
-Текущий промежуточный host принимает same-UID IPC и может показать локальный выбор Ghostty по запросу такого процесса. Выбор записывается только за этим connection и не открывает терминальный read/input (`terminal_access=false`). Host выдаёт connection-bound grant token после локального выбора; gateway пока не использует его, так как session operations закрыты. `termex-host --stop` через отдельный private socket отзывает grants увеличением epoch без ожидания MCP, helper или свободного клиентского слота. Перед включением read/input нужны стабильная identity gateway, отдельные permissions и проверка grants/epoch у dispatch.
+Host принимает same-UID IPC и может показать локальный выбор Ghostty. Выбор записывается за connection; grant token остаётся внутри gateway. Для opt-in `terminal_screen` host дополнительно сверяет peer executable с установленным рядом `termex-mcp` по device/inode, token, generation, scope, clipboard permission и epoch до адресного export и после него. Это локальная проверка binary identity, не подпись и не защита от злонамеренного same-UID пользователя. `termex-host --stop` через отдельный private socket отзывает grants без ожидания MCP, helper или свободного клиентского слота. Input, close и clipboard без отдельной отметки остаются закрыты.
 
 ## Grants и writer lease
 
@@ -26,7 +26,7 @@ Read и control выдаются отдельно; close и clipboard export —
 
 Нельзя обещать автоматический отзыв при любом физическом нажатии клавиши без фактического input event source. Baseline — надёжное **явное** локальное Take control/Stop, не незаметный global event tap. Управление человеком всегда может быть возвращено вне MCP, даже если модель/компрессор зависли.
 
-Revoke сначала атомарно увеличивает lease/grant epoch и блокирует новые dispatch, затем отменяет очередь и cleanup. Не ждать долгого Apple Event/Headroom. Уже переданные bytes и уже запущенную команду не отзывают; emergency interrupt — отдельное действие пользователя, не default kill. После revoke hidden queued input никогда не возобновляется.
+Общий контракт revoke должен блокировать новые dispatch до подтверждения пользователю, затем отменять очередь и выполнять cleanup. В текущем foundation Stop отключает текущие gateway sockets, повышает grant epoch и только после этого подтверждает отзыв; новые клиенты должны пройти локальное согласие. Это не ждёт долгого Apple Event/Headroom. Уже помещённые в socket bytes могут быть дочитаны после подтверждения; начатое действие Ghostty может завершиться локально, но не даёт нового MCP-ответа по отозванному grant. Уже запущенную команду не отзывают; emergency interrupt — отдельное действие пользователя, не default kill. После revoke hidden queued input никогда не возобновляется.
 
 ## Privacy mode
 
@@ -38,7 +38,7 @@ Default diagnostics — IDs, durations, versions, state transitions, counts; б�
 
 ## Native export risks
 
-Ghostty clipboard bridge использует только проверенные API/actions и явно сообщается. Clipboard backup — только локальная память helper, не tool output. Не читать путь из clipboard без ownership/fstat/path validation. На конфликт fail closed. Обнаружение чужого файла не даёт прав агенту его читать. Ограничить частоту и размер export. Perfect clipboard restoration не гарантировать из-за внешних writers и watchers.
+Ghostty clipboard bridge использует только `write_screen_file:copy` на точной surface после отдельного локального согласия. Clipboard backup — только локальная память host, не tool output. Путь проверяется как единственный новый export directory за вызов; файл открывается через private temp directory FD с `O_NOFOLLOW`, owner/mode/size/birthtime/fstat checks. На конфликт fail closed; обнаружение чужого файла не даёт прав агенту его читать. Выдача ограничена 16 KiB, одним вызовом за 5 секунд и 64 за жизнь host для одного app instance из-за утечки FD в установленном Ghostty 1.3.1. Clipboard restore использует changeCount/path, но atomic CAS нет; сторонний writer или watcher остаётся остаточным риском. Синтетический тест проверил ранний конфликт и отзыв во время export; поздняя конкурентная запись, реальный concurrent export и deferred clipboard provider ещё не проверены.
 
 ## Недоверенный terminal output
 
