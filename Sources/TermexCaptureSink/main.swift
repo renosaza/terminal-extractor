@@ -63,7 +63,7 @@ func sink(paths: [String], limit: Int) throws {
         if offset < count { lost = true }
         if lost && !gapAttempted {
             gapAttempted = true
-            try? create(paths[2])
+            try create(paths[2])
         }
     }
     let flushResult = lost ? 0 : fsync(fd)
