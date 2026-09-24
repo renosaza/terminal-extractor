@@ -185,6 +185,44 @@ let neighborPID = try panePID(secondBinding)
 try require(neighborPID == secondPID, "neighbor PID after launch")
 try mutateFixture(["kill-session", "-t", workloadBinding.sessionID])
 
+let shellRef = SessionRef(id: UUID(), generation: 1)
+let shellPlaceholder = try manager.create(shellRef)
+let shellGate = try manager.armCapture(shellRef, sinkExecutable: sink, maxBytes: 4096)
+let shellBinding = try manager.launchCapturedProcess(shellRef, gate: shellGate,
+    executableURL: URL(fileURLWithPath: "/bin/zsh"), arguments: ["-f", "-i"])
+try require(shellBinding.panePID != shellPlaceholder.panePID, "private shell launch PID")
+let shellBefore = try manager.captureObservation(shellRef, gate: shellGate)
+let shellState = UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: "")
+try mutateFixture(["send-keys", "-l", "-t", shellBinding.paneID, "TE_PRIVATE_STATE=\(shellState)"])
+try mutateFixture(["send-keys", "-t", shellBinding.paneID, "Enter"])
+let shellBetween = try manager.revalidate(shellRef)
+try require(shellBetween == shellBinding, "private shell binding between commands")
+try mutateFixture(["send-keys", "-l", "-t", shellBinding.paneID,
+                   "printf 'TE_ZSH_STATE_%s\\n' \"$TE_PRIVATE_STATE\""])
+try mutateFixture(["send-keys", "-t", shellBinding.paneID, "Enter"])
+let shellMarker = Data("TE_ZSH_STATE_\(shellState)".utf8)
+var shellStateObserved = false
+for _ in 0..<150 {
+    let names = try FileManager.default.contentsOfDirectory(atPath: root.path)
+    for name in names where name.hasPrefix("capture-") {
+        let segment = root.appendingPathComponent(name).appendingPathComponent("segment")
+        if let bytes = try? Data(contentsOf: segment), bytes.range(of: shellMarker) != nil {
+            shellStateObserved = true
+        }
+    }
+    if shellStateObserved { break }
+    usleep(20_000)
+}
+try require(shellStateObserved, "private zsh retained state across commands")
+let shellAfter = try manager.captureObservation(shellRef, gate: shellGate)
+try require(shellAfter.observedBytes > shellBefore.observedBytes && shellAfter.pipeConnected &&
+            !shellAfter.gapObserved, "private shell capture metadata advanced")
+let shellVerified = try manager.revalidate(shellRef)
+try require(shellVerified == shellBinding, "private shell binding after commands")
+let neighborAfterShell = try panePID(secondBinding)
+try require(neighborAfterShell == secondPID, "neighbor PID after private shell")
+try manager.close(shellRef)
+
 try mutateFixture(["pipe-pane", "-O", "-t", secondBinding.paneID, "sleep 60"])
 var foreignPipePID: String?
 for _ in 0..<100 {
@@ -323,4 +361,4 @@ try failureManager.close(beforeRef)
 let peerAfterPlaceholderClose = try failureManager.revalidate(failurePeer)
 try require(peerAfterPlaceholderClose == failurePeerBinding, "peer survived exact placeholder close")
 
-print("private_namespace=PASS capture_gate=PASS synthetic_workload=PASS capture_observation=PASS guarded_launch=PASS no_arg_rejected=PASS pipe_replacement=PASS foreign_pipe=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS atomic_stale_close=PASS lost_ack_quarantine=PASS pre_dispatch_quarantine=PASS healthy_anchor=PASS missing_tmux=PASS socket_collision=PASS")
+print("private_namespace=PASS capture_gate=PASS synthetic_workload=PASS capture_observation=PASS guarded_launch=PASS private_shell_state=PASS no_arg_rejected=PASS pipe_replacement=PASS foreign_pipe=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS atomic_stale_close=PASS lost_ack_quarantine=PASS pre_dispatch_quarantine=PASS healthy_anchor=PASS missing_tmux=PASS socket_collision=PASS")
