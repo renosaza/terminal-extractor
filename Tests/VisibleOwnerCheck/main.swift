@@ -77,15 +77,42 @@ try manager.close(ref)
 closed = true
 let cleanMarker = root.appendingPathComponent(directories[0]).appendingPathComponent("clean_eof")
 let closedRecord = root.appendingPathComponent(directories[0]).appendingPathComponent("closed")
-for _ in 0..<100 where !FileManager.default.fileExists(atPath: cleanMarker.path) ||
-                       !FileManager.default.fileExists(atPath: closedRecord.path) {
+var closure = try manager.closedCaptureObservation(ref, gate: gate)
+for _ in 0..<100 where closure == nil {
     Thread.sleep(forTimeInterval: 0.02)
+    closure = try manager.closedCaptureObservation(ref, gate: gate)
 }
 cleanEOF = FileManager.default.fileExists(atPath: cleanMarker.path)
 let segmentSize = try FileManager.default.attributesOfItem(atPath: segment.path)[.size] as? NSNumber
 let record = try String(contentsOf: closedRecord, encoding: .utf8)
-guard cleanEOF, let segmentSize, record == "\(segmentSize.uint64Value) clean" else {
+guard cleanEOF, let segmentSize, record == "\(segmentSize.uint64Value) clean",
+      closure?.observedBytes == segmentSize.uint64Value, closure?.gapObserved == false else {
     throw CheckFailure.failed
+}
+if selfCheck {
+    do {
+        _ = try manager.closedCaptureObservation(SessionRef(id: ref.id, generation: 2), gate: gate)
+        throw CheckFailure.failed
+    } catch ManagedTmux.Failure.staleSession {}
+    try "invalid".write(to: closedRecord, atomically: false, encoding: .utf8)
+    do {
+        _ = try manager.closedCaptureObservation(ref, gate: gate)
+        throw CheckFailure.failed
+    } catch ManagedTmux.Failure.invalidPane {}
+    try record.write(to: closedRecord, atomically: false, encoding: .utf8)
+    let gapMarker = root.appendingPathComponent(directories[0]).appendingPathComponent("gap")
+    let gapFD = open(gapMarker.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+    guard gapFD >= 0 else { throw CheckFailure.failed }
+    _ = Darwin.close(gapFD)
+    do {
+        _ = try manager.closedCaptureObservation(ref, gate: gate)
+        throw CheckFailure.failed
+    } catch ManagedTmux.Failure.invalidPane {}
+    try FileManager.default.removeItem(at: gapMarker)
+    try FileManager.default.removeItem(at: closedRecord)
+    guard try manager.closedCaptureObservation(ref, gate: gate) == nil else {
+        throw CheckFailure.failed
+    }
 }
 print("private_owner=PASS capture_pipe_marker=PASS screen_metadata=PASS clean_fixture_close=PASS" +
       (selfCheck ? "" : " attach_return=PASS"))

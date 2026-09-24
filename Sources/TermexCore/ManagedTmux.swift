@@ -26,6 +26,11 @@ public final class ManagedTmux: @unchecked Sendable {
         public let pipeConnected: Bool
     }
 
+    public struct ClosedCaptureObservation: Equatable, Sendable {
+        public let observedBytes: UInt64
+        public let gapObserved: Bool
+    }
+
     public struct ScreenMetadata: Equatable, Sendable {
         public let columns: Int
         public let rows: Int
@@ -298,6 +303,54 @@ public final class ManagedTmux: @unchecked Sendable {
                                                  Self.processIdentity(state.pipe.pid) == state.pipe)
     }
 
+    /// Post-close sink metadata only; nil means no validated close record, not an empty segment.
+    public func closedCaptureObservation(_ ref: SessionRef, gate: CaptureGate) throws -> ClosedCaptureObservation? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let entry = bindings[ref.id], entry.generation == ref.generation, !entry.active,
+              let state = gates[ref.id], state.gate == gate else { throw Failure.staleSession }
+        try checkRoot()
+        let directory = URL(fileURLWithPath: state.paths[0]).deletingLastPathComponent().path
+        guard let directoryInfo = Self.fileStat(directory),
+              directoryInfo.st_mode & S_IFMT == S_IFDIR, directoryInfo.st_uid == getuid(),
+              directoryInfo.st_mode & 0o077 == 0,
+              Identity(directoryInfo) == state.directory else { throw Failure.invalidPane }
+        let segmentFD = open(state.paths[0], O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        guard segmentFD >= 0 else { throw Failure.invalidPane }
+        defer { _ = Darwin.close(segmentFD) }
+        let recordFD = open(state.paths[4], O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        guard recordFD >= 0 else {
+            if errno == ENOENT { return nil }
+            throw Failure.invalidPane
+        }
+        defer { _ = Darwin.close(recordFD) }
+        var recordInfo = stat()
+        guard fstat(recordFD, &recordInfo) == 0,
+              recordInfo.st_mode & S_IFMT == S_IFREG, recordInfo.st_uid == getuid(),
+              recordInfo.st_mode & 0o077 == 0, recordInfo.st_size > 0,
+              recordInfo.st_size < 64 else { throw Failure.invalidPane }
+        var bytes = [UInt8](repeating: 0, count: 64)
+        guard read(recordFD, &bytes, Int(recordInfo.st_size)) == recordInfo.st_size,
+              let record = String(bytes: bytes.prefix(Int(recordInfo.st_size)), encoding: .utf8) else {
+            throw Failure.invalidPane
+        }
+        var segmentInfo = stat()
+        guard fstat(segmentFD, &segmentInfo) == 0,
+              segmentInfo.st_mode & S_IFMT == S_IFREG, segmentInfo.st_uid == getuid(),
+              segmentInfo.st_mode & 0o077 == 0, Identity(segmentInfo) == state.segment,
+              segmentInfo.st_size >= 0, segmentInfo.st_size <= state.limit else { throw Failure.invalidPane }
+        let size = UInt64(segmentInfo.st_size)
+        let gap: Bool
+        if record == "\(size) clean" { gap = false }
+        else if record == "\(size) gapped" { gap = true }
+        else { throw Failure.invalidPane }
+        let gapMarker = try Self.markerObserved(state.paths[2])
+        let cleanMarker = try Self.markerObserved(state.paths[3])
+        guard gap ? !cleanMarker : !gapMarker else { throw Failure.invalidPane }
+        guard gap ? gapMarker : cleanMarker else { return nil }
+        return ClosedCaptureObservation(observedBytes: size, gapObserved: gap)
+    }
+
     public func close(_ ref: SessionRef) throws {
         lock.lock()
         defer { lock.unlock() }
@@ -315,7 +368,6 @@ public final class ManagedTmux: @unchecked Sendable {
         guard outcome == "termex_closed\n" else { throw Failure.invalidPane }
         try checkSocket(allowMissing: false)
         bindings[ref.id]?.active = false
-        gates.removeValue(forKey: ref.id)
     }
 
     private func activeBinding(_ ref: SessionRef) throws -> Binding {

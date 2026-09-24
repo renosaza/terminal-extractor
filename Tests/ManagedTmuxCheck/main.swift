@@ -91,6 +91,13 @@ do {
 } catch ManagedTmux.Failure.staleSession {}
 
 try manager.close(first)
+var firstClosed = try manager.closedCaptureObservation(first, gate: gate)
+for _ in 0..<100 where firstClosed == nil {
+    usleep(20_000)
+    firstClosed = try manager.closedCaptureObservation(first, gate: gate)
+}
+try require(firstClosed?.observedBytes == 0 && firstClosed?.gapObserved == false,
+            "closed private placeholder capture")
 do {
     _ = try manager.captureObservation(first, gate: gate)
     throw CheckFailure(name: "closed capture gate remained available")
@@ -115,6 +122,27 @@ func mutateFixture(_ arguments: [String], socketPath: String = secondBinding.soc
     guard process.terminationStatus == 0 else { throw CocoaError(.fileWriteUnknown) }
 }
 
+let quotaRef = SessionRef(id: UUID(), generation: 1)
+_ = try manager.create(quotaRef)
+let quotaGate = try manager.armCapture(quotaRef, sinkExecutable: sink, maxBytes: 64)
+_ = try manager.launchCapturedProcess(quotaRef, gate: quotaGate,
+    executableURL: URL(fileURLWithPath: "/bin/sh"),
+    arguments: ["-c", "printf '%080d' 0; exec /bin/sleep 3600"])
+var quotaLive = try manager.captureObservation(quotaRef, gate: quotaGate)
+for _ in 0..<100 where !quotaLive.gapObserved {
+    usleep(20_000)
+    quotaLive = try manager.captureObservation(quotaRef, gate: quotaGate)
+}
+try require(quotaLive.gapObserved && quotaLive.observedBytes == 64, "quota before close")
+try manager.close(quotaRef)
+var quotaClosed = try manager.closedCaptureObservation(quotaRef, gate: quotaGate)
+for _ in 0..<100 where quotaClosed == nil {
+    usleep(20_000)
+    quotaClosed = try manager.closedCaptureObservation(quotaRef, gate: quotaGate)
+}
+try require(quotaClosed?.observedBytes == 64 && quotaClosed?.gapObserved == true,
+            "gapped private close record")
+
 let initialScreen = try manager.screenMetadata(second)
 try require(initialScreen.columns > 0 && initialScreen.rows > 0 &&
             initialScreen.cursorX >= 0 && initialScreen.cursorY >= 0 &&
@@ -136,6 +164,10 @@ do {
     throw CheckFailure(name: "cross-session launch gate was accepted")
 } catch ManagedTmux.Failure.staleSession {}
 let workloadGate = try manager.armCapture(workload, sinkExecutable: sink, maxBytes: 64)
+do {
+    _ = try manager.closedCaptureObservation(first, gate: workloadGate)
+    throw CheckFailure(name: "cross-session closed gate was accepted")
+} catch ManagedTmux.Failure.staleSession {}
 do {
     _ = try manager.launchCapturedProcess(workload, gate: gate,
                                           executableURL: URL(fileURLWithPath: "/bin/sleep"), arguments: ["3600"])
