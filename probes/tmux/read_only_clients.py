@@ -5,6 +5,7 @@ import fcntl
 import os
 import pty
 import shlex
+import struct
 import subprocess
 import sys
 import tempfile
@@ -52,17 +53,19 @@ def probe():
                                     stderr=subprocess.DEVNULL, text=True, timeout=5)
             return result.stdout.strip()
 
-        def attach(flags):
+        def attach(rows, columns, flags=None):
             master, slave = pty.openpty()
             tty = os.ttyname(slave)
             try:
+                fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
+
                 def controlling_tty():
                     os.setsid()
                     fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
 
                 process = subprocess.Popen(
                     [TMUX, "-S", socket, "-f", "/dev/null", "attach-session",
-                     "-f", flags, "-t", "=" + SESSION],
+                     *(["-f", flags] if flags else []), "-t", "=" + SESSION],
                     stdin=slave, stdout=slave, stderr=slave, preexec_fn=controlling_tty,
                     close_fds=True, env={**os.environ, "TERM": "xterm-256color"})
             except BaseException:
@@ -77,11 +80,18 @@ def probe():
             command = shlex.join([sys.executable, str(Path(__file__).resolve()),
                                   "--fixture", str(evidence)])
             mux("new-session", "-d", "-s", SESSION, command)
+            mux("set-option", "-g", "status", "off")
             wait_for(lambda: evidence.exists() and evidence.read_bytes() == b"READY\n",
                      "fixture did not start")
 
-            normal, normal_tty = attach("ignore-size")
-            readonly, readonly_tty = attach("read-only,ignore-size")
+            normal, normal_tty = attach(24, 80)
+            window_size = lambda: mux("list-windows", "-t", "=" + SESSION,
+                                      "-F", "#{window_width}x#{window_height}")
+            try:
+                wait_for(lambda: window_size() == "80x24", "normal client did not set window size")
+            except TimeoutError:
+                raise RuntimeError(f"normal client window size={window_size()}") from None
+            readonly, readonly_tty = attach(10, 20, "read-only,ignore-size")
 
             def clients_match():
                 lines = mux("list-clients", "-F", "#{client_tty}\t#{client_readonly}").splitlines()
@@ -89,6 +99,8 @@ def probe():
                 return modes.get(normal_tty) == "0" and modes.get(readonly_tty) == "1"
 
             wait_for(clients_match, "both client modes were not observed")
+            require(window_size() == "80x24",
+                    f"read-only client window size={window_size()}")
             os.write(normal, b"NORMAL_1\n")
             wait_for(lambda: evidence.read_bytes() == b"READY\nNORMAL_1\n",
                      "normal client input did not reach pane")
@@ -102,6 +114,7 @@ def probe():
             time.sleep(0.3)
             require(evidence.read_bytes() == b"READY\nNORMAL_1\nNORMAL_2\n",
                     "read-only client input reached pane later")
+            require(window_size() == "80x24", "read-only client changed window size later")
         finally:
             for _, _, tty in clients:
                 try:
@@ -131,6 +144,6 @@ if __name__ == "__main__":
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
             print(f"read_only_clients=FAIL ({type(error).__name__}: {error})", file=sys.stderr)
             raise SystemExit(1) from None
-        print("normal_client_input=PASS read_only_client_blocked=PASS client_modes=PASS")
+        print("normal_client_input=PASS read_only_client_blocked=PASS client_modes=PASS geometry=PASS")
     else:
         raise SystemExit("usage: read_only_clients.py")
