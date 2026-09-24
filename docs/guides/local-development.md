@@ -4,7 +4,7 @@ status: draft
 ---
 # Разработка и выпуск: текущее состояние
 
-В репозитории есть документация, feasibility probes и начальная product SwiftPM foundation: CLI host, MCP gateway, AppKit helper выбора Ghostty, локальные настройки и `terminal_capabilities`/`terminal_request_access`/`terminal_screen`. Последний — opt-in ограниченный снимок одной выбранной surface через clipboard; по умолчанию config закрывает этот путь. Живой MCP-тест подтвердил чтение трёх surface и восстановление доступных clipboard types/bytes в одном вызове; конкурентные случаи остаются открытыми. Input и полноценный GUI host отсутствуют. Installer, release binary и CI отсутствуют. `probes/mcp/Package.swift` собирает отдельный тестовый MCP stdio server. Предлагаемый стек — [архитектура](../architecture/README.md), текущее состояние — [TE-E02](../work/epics/TE-E02.md).
+В репозитории есть документация, feasibility probes и начальная product SwiftPM foundation: CLI host, MCP gateway, AppKit helper выбора Ghostty, локальные настройки и `terminal_capabilities`/`terminal_request_access`/`terminal_screen`. Последний — opt-in ограниченный снимок screen или retained scrollback одной выбранной surface через clipboard; по умолчанию config закрывает этот путь. Export свыше 16 КиБ отклоняется. Живой MCP-тест подтвердил только screen read трёх surface и восстановление доступных clipboard types/bytes в одном вызове; scrollback прошёл синтетические проверки, конкурентные случаи остаются открытыми. Input и полноценный GUI host отсутствуют. Installer, release binary и CI отсутствуют. `probes/mcp/Package.swift` собирает отдельный тестовый MCP stdio server. Предлагаемый стек — [архитектура](../architecture/README.md), текущее состояние — [TE-E02](../work/epics/TE-E02.md).
 
 ## Начало реализации
 

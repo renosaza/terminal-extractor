@@ -161,7 +161,7 @@ struct TermexMCP {
                                     "source": .string(source), "history_complete": .bool(complete),
                                  ]), isError: false)
                 } catch {
-                    return .init(content: [.text(text: "screen read unavailable or denied", annotations: nil, _meta: nil)], isError: true)
+                    return .init(content: [.text(text: "snapshot read unavailable or denied", annotations: nil, _meta: nil)], isError: true)
                 }
             }
             guard parameters.arguments?.isEmpty ?? true else {
