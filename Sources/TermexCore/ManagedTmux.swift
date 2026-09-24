@@ -128,7 +128,7 @@ public final class ManagedTmux: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         let binding = try activeBinding(ref)
-        try verify(binding)
+        try verify(binding, expectedPipePID: gates[ref.id]?.pipePID)
         return binding
     }
 
@@ -190,7 +190,7 @@ public final class ManagedTmux: @unchecked Sendable {
         guard var state = gates[ref.id], state.gate == gate, !state.launchAttempted else {
             throw Failure.staleSession
         }
-        try verify(binding)
+        try verify(binding, expectedPipePID: state.pipePID)
         let program = try checkedExecutable(executableURL)
         // With no argument tmux executes a shell-command via /bin/sh instead of direct exec.
         guard !arguments.isEmpty,
@@ -210,7 +210,7 @@ public final class ManagedTmux: @unchecked Sendable {
         }
         let updated = Binding(sessionName: binding.sessionName, sessionID: binding.sessionID,
                               paneID: binding.paneID, panePID: details.2, socketPath: binding.socketPath)
-        try verify(updated)
+        try verify(updated, expectedPipePID: state.pipePID)
         bindings[ref.id]?.binding = updated
         return updated
     }
@@ -266,12 +266,16 @@ public final class ManagedTmux: @unchecked Sendable {
         return entry.binding
     }
 
-    private func verify(_ binding: Binding) throws {
+    private func verify(_ binding: Binding, expectedPipePID: Int32? = nil) throws {
         try checkRoot()
         try checkSocket(allowMissing: false)
+        let format = "#{session_id}\t#{pane_id}\t#{pane_pid}\t#{pane_dead}" +
+            (expectedPipePID == nil ? "" : "\t#{pane_pipe_pid}")
         let output = try run(["list-panes", "-t", "=\(binding.sessionName)",
-                              "-F", "#{session_id}\t#{pane_id}\t#{pane_pid}\t#{pane_dead}"])
-        guard output == "\(binding.sessionID)\t\(binding.paneID)\t\(binding.panePID)\t0\n" else {
+                              "-F", format])
+        let expected = "\(binding.sessionID)\t\(binding.paneID)\t\(binding.panePID)\t0" +
+            (expectedPipePID.map { "\t\($0)" } ?? "") + "\n"
+        guard output == expected else {
             throw Failure.invalidPane
         }
         try checkSocket(allowMissing: false)

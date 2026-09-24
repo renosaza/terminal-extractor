@@ -161,6 +161,22 @@ try require(observedWorkload, "owner gate captured synthetic workload")
 let workloadObservation = try manager.captureObservation(workload, gate: workloadGate)
 try require(workloadObservation.observedBytes > 0 && workloadObservation.pipeConnected &&
             !workloadObservation.gapObserved, "launched workload metadata")
+let originalPipePID = try panePID(launched, format: "#{pane_pipe_pid}")
+try mutateFixture(["pipe-pane", "-O", "-t", launched.paneID, "cat >/dev/null"])
+var replacementPipePID: String?
+for _ in 0..<100 {
+    replacementPipePID = try? panePID(launched, format: "#{pane_pipe_pid}")
+    if replacementPipePID != nil && replacementPipePID != originalPipePID { break }
+    usleep(20_000)
+}
+try require(replacementPipePID != nil && replacementPipePID != originalPipePID,
+            "replacement capture pipe PID")
+do {
+    _ = try manager.revalidate(workload)
+    throw CheckFailure(name: "replaced capture pipe retained valid binding")
+} catch ManagedTmux.Failure.invalidPane {}
+let disconnected = try manager.captureObservation(workload, gate: workloadGate)
+try require(!disconnected.pipeConnected, "replaced capture pipe reported disconnected")
 let neighborPID = try panePID(secondBinding)
 try require(neighborPID == secondPID, "neighbor PID after launch")
 try mutateFixture(["kill-session", "-t", workloadBinding.sessionID])
@@ -200,4 +216,4 @@ do {
 } catch ManagedTmux.Failure.commandFailed {}
 catch ManagedTmux.Failure.socketCollision {}
 
-print("private_namespace=PASS capture_gate=PASS synthetic_workload=PASS capture_observation=PASS guarded_launch=PASS no_arg_rejected=PASS foreign_pipe=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS atomic_stale_close=PASS missing_tmux=PASS socket_collision=PASS")
+print("private_namespace=PASS capture_gate=PASS synthetic_workload=PASS capture_observation=PASS guarded_launch=PASS no_arg_rejected=PASS pipe_replacement=PASS foreign_pipe=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS atomic_stale_close=PASS missing_tmux=PASS socket_collision=PASS")
