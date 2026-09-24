@@ -138,9 +138,18 @@ let config = try LocalConfig.load(at: configURL, requireExisting: explicitConfig
                 throw LocalIPC.Failure.unauthorizedPeer
             }
             let target = try consent.revalidate(session)
-            let snapshot = try GhosttyScreenExport.read(target, view: view) {
-                grants.check(connection: connectionID, session: session, token: token,
-                             scope: .read, clipboardExport: true)
+            let snapshot: GhosttyScreenExport.Snapshot
+            do {
+                snapshot = try GhosttyScreenExport.read(target, view: view) {
+                    grants.check(connection: connectionID, session: session, token: token,
+                                 scope: .read, clipboardExport: true)
+                }
+            } catch GhosttyExportFile.Failure.tooLarge {
+                try LocalIPC.writeFrame(Data(#"{"error":"too_large"}"#.utf8), to: client)
+                return true
+            } catch GhosttyScreenExport.Failure.clipboardUnavailable {
+                try LocalIPC.writeFrame(Data(#"{"error":"clipboard_unavailable"}"#.utf8), to: client)
+                return true
             }
             guard grants.check(connection: connectionID, session: session, token: token,
                                scope: .read, clipboardExport: true),

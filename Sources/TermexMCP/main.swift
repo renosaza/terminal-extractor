@@ -149,6 +149,12 @@ struct TermexMCP {
                         throw LocalIPC.Failure.invalidFrame
                     }
                     let reply = try channel.screen(id: id, generation: generation, view: view)
+                    if reply["error"] as? String == "too_large" {
+                        return .init(content: [.text(text: "snapshot exceeds 16 KiB", annotations: nil, _meta: nil)], isError: true)
+                    }
+                    if reply["error"] as? String == "clipboard_unavailable" {
+                        return .init(content: [.text(text: "clipboard cannot be preserved for export", annotations: nil, _meta: nil)], isError: true)
+                    }
                     guard let text = reply["text"] as? String,
                           let observedAt = reply["observed_at"] as? String,
                           let source = reply["source"] as? String,

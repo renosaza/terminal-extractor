@@ -71,9 +71,14 @@ with tempfile.TemporaryDirectory(prefix="termex-release-mcp-") as directory:
                         assert request["session_id"] == session_id and request["generation"] == 1
                         assert request["grant_token"] == tokens[approvals - 1]
                         reads.append(request["view"])
-                        reply = {"text": "synthetic", "observed_at": "2026-09-24T00:00:00Z",
-                                 "source": "ghostty_screen_snapshot" if request["view"] == "screen" else "ghostty_scrollback_snapshot",
-                                 "history_complete": False}
+                        if reads.count("scrollback") == 2:
+                            reply = {"error": "too_large"}
+                        elif reads.count("scrollback") == 3:
+                            reply = {"error": "clipboard_unavailable"}
+                        else:
+                            reply = {"text": "synthetic", "observed_at": "2026-09-24T00:00:00Z",
+                                     "source": "ghostty_screen_snapshot" if request["view"] == "screen" else "ghostty_scrollback_snapshot",
+                                     "history_complete": False}
                     elif operation == "release_session":
                         assert request["session_id"] == session_id and request["generation"] == 1
                         releases.append(request["grant_token"])
@@ -112,9 +117,13 @@ with tempfile.TemporaryDirectory(prefix="termex-release-mcp-") as directory:
         target = {"session_id": session_id, "generation": 1}
         assert call("terminal_screen", target)["structuredContent"]["source"] == "ghostty_screen_snapshot"
         assert call("terminal_screen", {**target, "view": "scrollback"})["structuredContent"]["source"] == "ghostty_scrollback_snapshot"
+        oversized = call("terminal_screen", {**target, "view": "scrollback"})
+        assert oversized["isError"] and oversized["content"][0]["text"] == "snapshot exceeds 16 KiB"
+        clipboard = call("terminal_screen", {**target, "view": "scrollback"})
+        assert clipboard["isError"] and clipboard["content"][0]["text"] == "clipboard cannot be preserved for export"
         assert call("terminal_screen", {**target, "view": "invalid"})["isError"]
         assert call("terminal_screen", {**target, "other": True})["isError"]
-        assert reads == ["screen", "scrollback"]
+        assert reads == ["screen", "scrollback", "scrollback", "scrollback"]
         arguments = {"session_id": session_id, "generation": 1, "request_id": "first"}
         first = call("terminal_release", arguments)
         assert first["structuredContent"] == {**arguments, "status": "released"}
