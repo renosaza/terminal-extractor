@@ -36,7 +36,7 @@ def read_until(fd, marker, timeout=4):
     return seen
 
 
-def run_shell(env, commands, login=False):
+def run_shell(env, commands, login=False, final_command="exit", expected_status=0):
     master, slave = pty.openpty()
     args = ["-zsh" if login else "zsh", "-i"]
     proc = subprocess.Popen(args, executable=ZSH, stdin=slave, stdout=slave,
@@ -48,7 +48,7 @@ def run_shell(env, commands, login=False):
         for command in commands:
             os.write(master, command.encode() + b"\n")
             output += read_until(master, PROMPT)
-        os.write(master, b"exit\n")
+        os.write(master, final_command.encode() + b"\n")
         deadline = time.monotonic() + 4
         while proc.poll() is None and time.monotonic() < deadline:
             if select.select([master], [], [], 0.1)[0]:
@@ -58,6 +58,7 @@ def run_shell(env, commands, login=False):
                     break
         if proc.poll() is None:
             raise AssertionError(f"zsh did not exit; output tail: {output[-1200:]!r}")
+        assert proc.returncode == expected_status, (proc.returncode, expected_status)
     finally:
         if proc.poll() is None:
             proc.terminate()
@@ -67,7 +68,7 @@ def run_shell(env, commands, login=False):
                 proc.kill()
                 proc.wait(timeout=4)
         os.close(master)
-    return output
+    return output, proc.returncode
 
 
 def main():
@@ -125,7 +126,7 @@ ZDOTDIR=$TE_ORIGINAL_ZDOTDIR
                     "export TE_EXPORT=ok", "print -r -- EXPORT:$TE_EXPORT",
                     "false", "true | false", "print -r -- $'a\\nb'"]
         env["ZDOTDIR"] = str(shim)
-        output = run_shell(env, commands)
+        output, _ = run_shell(env, commands)
         lines = events.read_text(encoding="utf-8").splitlines()
         starts = [line for line in lines if line.startswith("start|")]
         ends = [line for line in lines if line.startswith("end|")]
@@ -155,6 +156,28 @@ ZDOTDIR=$TE_ORIGINAL_ZDOTDIR
         assert [line.split(":", 1)[0] for line in login_lines] == [".zshenv", ".zprofile", ".zshrc", ".zlogin", ".zlogout"]
         assert all(line.endswith(str(original)) for line in login_lines)
         print(json.dumps({"case": "interactive_login", "startup": login_lines}, ensure_ascii=False))
+        events.write_text("", encoding="utf-8")
+        _, exec_status = run_shell(env, [], final_command="exec /usr/bin/false", expected_status=1)
+        exec_lines = events.read_text(encoding="utf-8").splitlines()
+        exec_starts = [line for line in exec_lines if line.startswith("start|")]
+        exec_ends = [line for line in exec_lines if line.startswith("end|")]
+        assert len(exec_starts) == 1 and exec_starts[0].split("|")[1] == "1"
+        assert "exec /usr/bin/false" in exec_starts[0]
+        assert len(exec_ends) == 1 and exec_ends[0].split("|")[1] == "0"
+        print(json.dumps({"case": "exec_replaces_shell", "starts": len(exec_starts),
+                          "ends": len(exec_ends), "hook_end_for_exec": False,
+                          "fixture_process_status": exec_status}))
+        events.write_text("", encoding="utf-8")
+        _, exit_status = run_shell(env, [], final_command="exit 7", expected_status=7)
+        exit_lines = events.read_text(encoding="utf-8").splitlines()
+        exit_starts = [line for line in exit_lines if line.startswith("start|")]
+        exit_ends = [line for line in exit_lines if line.startswith("end|")]
+        assert len(exit_starts) == 1 and exit_starts[0].split("|")[1] == "1"
+        assert "exit 7" in exit_starts[0]
+        assert len(exit_ends) == 1 and exit_ends[0].split("|")[1] == "0"
+        print(json.dumps({"case": "exit_without_hook_end", "starts": len(exit_starts),
+                          "ends": len(exit_ends), "hook_end_for_exit": False,
+                          "fixture_process_status": exit_status}))
 
 
 if __name__ == "__main__":
