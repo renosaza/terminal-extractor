@@ -135,7 +135,7 @@ do {
 } catch ManagedTmux.Failure.commandFailed {}
 let launched = try manager.launchCapturedProcess(workload, gate: workloadGate,
     executableURL: URL(fileURLWithPath: "/bin/sh"),
-    arguments: ["-c", "printf 'TE_GATE_OK\\n'; exec /bin/sleep 3600"])
+    arguments: ["-c", "printf 'TE_GATE_OK\\n'; printf '%080d' 0; exec /bin/sleep 3600"])
 try require(launched.panePID != workloadBinding.panePID, "launch changed pane PID")
 let launchedVerified = try manager.revalidate(workload)
 try require(launchedVerified == launched, "launched pane binding")
@@ -158,9 +158,14 @@ for _ in 0..<100 {
     usleep(20_000)
 }
 try require(observedWorkload, "owner gate captured synthetic workload")
-let workloadObservation = try manager.captureObservation(workload, gate: workloadGate)
-try require(workloadObservation.observedBytes > 0 && workloadObservation.pipeConnected &&
-            !workloadObservation.gapObserved, "launched workload metadata")
+var workloadObservation = try manager.captureObservation(workload, gate: workloadGate)
+for _ in 0..<100 where !workloadObservation.gapObserved {
+    usleep(20_000)
+    workloadObservation = try manager.captureObservation(workload, gate: workloadGate)
+}
+try require(workloadObservation.observedBytes == 64 && workloadObservation.pipeConnected &&
+            workloadObservation.gapObserved && !workloadObservation.sinkClosedCleanly,
+            "owner quota gap metadata")
 let originalPipePID = try panePID(launched, format: "#{pane_pipe_pid}")
 try mutateFixture(["pipe-pane", "-O", "-t", launched.paneID, "cat >/dev/null"])
 var replacementPipePID: String?
@@ -361,4 +366,4 @@ try failureManager.close(beforeRef)
 let peerAfterPlaceholderClose = try failureManager.revalidate(failurePeer)
 try require(peerAfterPlaceholderClose == failurePeerBinding, "peer survived exact placeholder close")
 
-print("private_namespace=PASS capture_gate=PASS synthetic_workload=PASS capture_observation=PASS guarded_launch=PASS private_shell_state=PASS no_arg_rejected=PASS pipe_replacement=PASS foreign_pipe=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS atomic_stale_close=PASS lost_ack_quarantine=PASS pre_dispatch_quarantine=PASS healthy_anchor=PASS missing_tmux=PASS socket_collision=PASS")
+print("private_namespace=PASS capture_gate=PASS synthetic_workload=PASS capture_observation=PASS owner_quota_gap=PASS guarded_launch=PASS private_shell_state=PASS no_arg_rejected=PASS pipe_replacement=PASS foreign_pipe=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS atomic_stale_close=PASS lost_ack_quarantine=PASS pre_dispatch_quarantine=PASS healthy_anchor=PASS missing_tmux=PASS socket_collision=PASS")
