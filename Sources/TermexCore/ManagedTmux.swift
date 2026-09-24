@@ -162,6 +162,20 @@ public final class ManagedTmux: @unchecked Sendable {
         return binding
     }
 
+    /// Point-in-time client metadata only; callers must recheck before relying on a view.
+    public func hasSingleAttachedClient(_ ref: SessionRef, expectedTTY: String) throws -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        let binding = try activeBinding(ref)
+        guard !isLaunchIndeterminate(ref.id) else { throw Failure.launchIndeterminate }
+        try verify(binding, expectedPipe: gates[ref.id]?.pipe)
+        let output = try run(["list-clients", "-t", "=\(binding.sessionName)",
+                              "-F", "#{session_id}\t#{client_tty}"])
+        try verify(binding, expectedPipe: gates[ref.id]?.pipe)
+        let rows = output.split(separator: "\n", omittingEmptySubsequences: false)
+        return rows.count == 2 && rows[1].isEmpty && rows[0] == "\(binding.sessionID)\t\(expectedTTY)"
+    }
+
     /// Point-in-time tmux grid metadata; no screen text or history leaves this API.
     public func screenMetadata(_ ref: SessionRef) throws -> ScreenMetadata {
         lock.lock()

@@ -122,6 +122,96 @@ func mutateFixture(_ arguments: [String], socketPath: String = secondBinding.soc
     guard process.terminationStatus == 0 else { throw CocoaError(.fileWriteUnknown) }
 }
 
+func attachFixture(_ binding: ManagedTmux.Binding) throws -> (Process, Int32, String) {
+    var master: Int32 = -1
+    var slave: Int32 = -1
+    guard openpty(&master, &slave, nil, nil, nil) == 0 else { throw CocoaError(.fileReadUnknown) }
+    let tty = String(cString: ttyname(slave))
+    let terminal = FileHandle(fileDescriptor: slave, closeOnDealloc: true)
+    let process = Process()
+    process.executableURL = executable
+    process.arguments = ["-S", binding.socketPath, "-f", "/dev/null", "attach-session",
+                         "-t", "=\(binding.sessionName)"]
+    process.environment = ProcessInfo.processInfo.environment.merging(["TERM": "xterm-256color"]) { _, new in new }
+    process.standardInput = terminal
+    process.standardOutput = terminal
+    process.standardError = terminal
+    do { try process.run() } catch {
+        close(master)
+        throw error
+    }
+    return (process, master, tty)
+}
+
+func waitForClient(_ ref: SessionRef, tty: String) throws {
+    for _ in 0..<100 {
+        if try manager.hasSingleAttachedClient(ref, expectedTTY: tty) { return }
+        usleep(20_000)
+    }
+    throw CheckFailure(name: "single attached client not observed")
+}
+
+func attachedTTYs(_ binding: ManagedTmux.Binding) throws -> Set<String> {
+    let process = Process()
+    process.executableURL = executable
+    process.arguments = ["-S", binding.socketPath, "-f", "/dev/null", "list-clients",
+                         "-t", "=\(binding.sessionName)", "-F", "#{client_tty}"]
+    let output = Pipe()
+    process.standardOutput = output
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else { throw CheckFailure(name: "client fixture query failed") }
+    let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+    return Set(text.split(separator: "\n").map(String.init))
+}
+
+let viewNeighbor = SessionRef(id: UUID(), generation: 1)
+let viewNeighborBinding = try manager.create(viewNeighbor)
+let (attached, attachedMaster, attachedTTY) = try attachFixture(secondBinding)
+defer { if attached.isRunning { attached.terminate() }; attached.waitUntilExit(); close(attachedMaster) }
+try waitForClient(second, tty: attachedTTY)
+let wrongTTYAccepted = try manager.hasSingleAttachedClient(second, expectedTTY: "/dev/ttys999")
+try require(!wrongTTYAccepted, "wrong attached TTY was accepted")
+let neighborAccepted = try manager.hasSingleAttachedClient(viewNeighbor, expectedTTY: attachedTTY)
+try require(!neighborAccepted, "neighbor session adopted attached client")
+do {
+    _ = try manager.hasSingleAttachedClient(SessionRef(id: second.id, generation: 2),
+                                            expectedTTY: attachedTTY)
+    throw CheckFailure(name: "stale client generation was accepted")
+} catch ManagedTmux.Failure.staleSession {}
+let (extra, extraMaster, extraTTY) = try attachFixture(secondBinding)
+defer { if extra.isRunning { extra.terminate() }; extra.waitUntilExit(); close(extraMaster) }
+for _ in 0..<100 {
+    if try attachedTTYs(secondBinding) == [attachedTTY, extraTTY] { break }
+    usleep(20_000)
+}
+let twoClientsObserved = try attachedTTYs(secondBinding) == [attachedTTY, extraTTY]
+try require(twoClientsObserved, "two attached fixture clients not observed")
+let multipleAccepted = try manager.hasSingleAttachedClient(second, expectedTTY: attachedTTY)
+try require(!multipleAccepted, "multiple attached clients were accepted")
+let injectedTTY = attachedTTY + "\n\(secondBinding.sessionID)\t" + extraTTY
+let injectedAccepted = try manager.hasSingleAttachedClient(second, expectedTTY: injectedTTY)
+try require(!injectedAccepted, "newline TTY forged a single client")
+try mutateFixture(["detach-client", "-t", extraTTY])
+try waitForClient(second, tty: attachedTTY)
+try mutateFixture(["switch-client", "-c", attachedTTY, "-t", "=\(viewNeighborBinding.sessionName)"])
+try waitForClient(viewNeighbor, tty: attachedTTY)
+let switchedOldAccepted = try manager.hasSingleAttachedClient(second, expectedTTY: attachedTTY)
+try require(!switchedOldAccepted, "switched client stayed bound to old session")
+try mutateFixture(["switch-client", "-c", attachedTTY, "-t", "=\(secondBinding.sessionName)"])
+try waitForClient(second, tty: attachedTTY)
+try mutateFixture(["detach-client", "-t", attachedTTY])
+let detachedAccepted = try manager.hasSingleAttachedClient(second, expectedTTY: attachedTTY)
+try require(!detachedAccepted, "detached client remained bound")
+let (rebound, reboundMaster, reboundTTY) = try attachFixture(viewNeighborBinding)
+defer { if rebound.isRunning { rebound.terminate() }; rebound.waitUntilExit(); close(reboundMaster) }
+try waitForClient(viewNeighbor, tty: reboundTTY)
+let reboundNeighborAccepted = try manager.hasSingleAttachedClient(second, expectedTTY: reboundTTY)
+try require(!reboundNeighborAccepted, "rebound client retained neighbor binding")
+try mutateFixture(["detach-client", "-t", reboundTTY])
+try manager.close(viewNeighbor)
+
 let quotaRef = SessionRef(id: UUID(), generation: 1)
 _ = try manager.create(quotaRef)
 let quotaGate = try manager.armCapture(quotaRef, sinkExecutable: sink, maxBytes: 64)
@@ -505,4 +595,4 @@ try failureManager.close(beforeRef)
 let peerAfterPlaceholderClose = try failureManager.revalidate(failurePeer)
 try require(peerAfterPlaceholderClose == failurePeerBinding, "peer survived exact placeholder close")
 
-print("private_namespace=PASS capture_gate=PASS synthetic_workload=PASS capture_observation=PASS screen_metadata=PASS owner_quota_gap=PASS dead_sink_detection=PASS guarded_launch=PASS stale_pid_launch=PASS private_shell_state=PASS private_shell_exit=PASS no_arg_rejected=PASS pipe_replacement=PASS foreign_pipe=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS atomic_stale_close=PASS lost_ack_quarantine=PASS pre_dispatch_quarantine=PASS healthy_anchor=PASS missing_tmux=PASS socket_collision=PASS")
+print("private_namespace=PASS capture_gate=PASS synthetic_workload=PASS capture_observation=PASS screen_metadata=PASS owner_quota_gap=PASS dead_sink_detection=PASS guarded_launch=PASS stale_pid_launch=PASS private_shell_state=PASS private_shell_exit=PASS no_arg_rejected=PASS pipe_replacement=PASS foreign_pipe=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS atomic_stale_close=PASS lost_ack_quarantine=PASS pre_dispatch_quarantine=PASS healthy_anchor=PASS missing_tmux=PASS socket_collision=PASS single_client_view=PASS")
