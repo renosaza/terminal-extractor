@@ -193,7 +193,7 @@ public final class ManagedTmux: @unchecked Sendable {
                                                 attributes: [.posixPermissions: 0o700])
         guard let info = Self.fileStat(directory), info.st_mode & S_IFMT == S_IFDIR,
               info.st_uid == getuid(), info.st_mode & 0o077 == 0 else { throw Failure.unsafeRoot }
-        let paths = ["segment", "ready", "gap", "clean_eof"].map {
+        let paths = ["segment", "ready", "gap", "clean_eof", "closed"].map {
             URL(fileURLWithPath: directory).appendingPathComponent($0).path
         }
         let command = ([sink, "--sink"] + paths + [String(maxBytes)]).map(Self.shellQuote).joined(separator: " ")
