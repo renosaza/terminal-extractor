@@ -7,6 +7,7 @@ public final class ManagedTmux: @unchecked Sendable {
         public let sessionName: String
         public let sessionID: String
         public let paneID: String
+        public let panePID: Int32
         public let socketPath: String
     }
 
@@ -65,10 +66,15 @@ public final class ManagedTmux: @unchecked Sendable {
         guard ref.generation > 0 else { throw Failure.staleSession }
         guard bindings[ref.id] == nil else { throw Failure.staleSession }
         try checkSocket(allowMissing: socketIdentity == nil)
+        if socketIdentity != nil {
+            // ponytail: require an existing live binding; a fresh namespace is needed after the last one closes.
+            guard let existing = bindings.values.first(where: { $0.active }) else { throw Failure.staleSession }
+            try verify(existing.binding)
+        }
         let name = "te-\(ref.id.uuidString.lowercased().replacingOccurrences(of: "-", with: ""))-g\(ref.generation)"
         let output: String
         do {
-            output = try run(["new-session", "-d", "-P", "-F", "#{session_id}\t#{pane_id}",
+            output = try run(["new-session", "-d", "-P", "-F", "#{session_id}\t#{pane_id}\t#{pane_pid}",
                               "-s", name, "/bin/sleep", "3600"])
         } catch {
             // The client may fail after the server creates its pane. Reconcile only our exact name.
@@ -85,14 +91,15 @@ public final class ManagedTmux: @unchecked Sendable {
             socketIdentity = Identity(info)
         }
         try checkSocket(allowMissing: false)
-        guard let pair = Self.parsePair(output) else {
+        guard let details = Self.parseDetails(output) else {
             cleanupCreated(name: name, expectedPair: nil)
             throw Failure.invalidPane
         }
-        let binding = Binding(sessionName: name, sessionID: pair.0, paneID: pair.1, socketPath: socket)
+        let binding = Binding(sessionName: name, sessionID: details.0, paneID: details.1,
+                              panePID: details.2, socketPath: socket)
         do { try verify(binding) }
         catch {
-            cleanupCreated(name: name, expectedPair: pair)
+            cleanupCreated(name: name, expectedPair: (details.0, details.1))
             throw error
         }
         bindings[ref.id] = (ref.generation, binding, true)
@@ -127,20 +134,22 @@ public final class ManagedTmux: @unchecked Sendable {
         try checkRoot()
         try checkSocket(allowMissing: false)
         let output = try run(["list-panes", "-t", "=\(binding.sessionName)",
-                              "-F", "#{session_id}\t#{pane_id}\t#{pane_dead}"])
-        guard output == "\(binding.sessionID)\t\(binding.paneID)\t0\n" else { throw Failure.invalidPane }
+                              "-F", "#{session_id}\t#{pane_id}\t#{pane_pid}\t#{pane_dead}"])
+        guard output == "\(binding.sessionID)\t\(binding.paneID)\t\(binding.panePID)\t0\n" else {
+            throw Failure.invalidPane
+        }
         try checkSocket(allowMissing: false)
     }
 
     private func cleanupCreated(name: String, expectedPair: (String, String)?) {
         guard (try? checkRoot()) != nil, (try? checkSocket(allowMissing: false)) != nil,
               let output = try? run(["list-panes", "-t", "=\(name)",
-                                     "-F", "#{session_id}\t#{pane_id}"]),
-              let pair = Self.parsePair(output),
-              expectedPair == nil || (pair.0 == expectedPair?.0 && pair.1 == expectedPair?.1) else {
+                                     "-F", "#{session_id}\t#{pane_id}\t#{pane_pid}"]),
+              let details = Self.parseDetails(output),
+              expectedPair == nil || (details.0 == expectedPair?.0 && details.1 == expectedPair?.1) else {
             return
         }
-        _ = try? run(["kill-session", "-t", pair.0])
+        _ = try? run(["kill-session", "-t", details.0])
     }
 
     private func checkRoot() throws {
@@ -165,13 +174,14 @@ public final class ManagedTmux: @unchecked Sendable {
         return lstat(path, &info) == 0 ? info : nil
     }
 
-    private static func parsePair(_ text: String) -> (String, String)? {
+    private static func parseDetails(_ text: String) -> (String, String, Int32)? {
         let parts = text.trimmingCharacters(in: .newlines).split(separator: "\t", omittingEmptySubsequences: false)
-        guard parts.count == 2, parts[0].first == "$", parts[1].first == "%",
+        guard parts.count == 3, parts[0].first == "$", parts[1].first == "%",
               parts[0].count > 1, parts[1].count > 1,
               parts[0].dropFirst().allSatisfy(\.isNumber),
-              parts[1].dropFirst().allSatisfy(\.isNumber) else { return nil }
-        return (String(parts[0]), String(parts[1]))
+              parts[1].dropFirst().allSatisfy(\.isNumber),
+              let pid = Int32(parts[2]), pid > 0 else { return nil }
+        return (String(parts[0]), String(parts[1]), pid)
     }
 
     private func run(_ arguments: [String]) throws -> String {
