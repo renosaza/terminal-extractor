@@ -49,11 +49,14 @@ def run_shell(env, commands, login=False, final_command="exit", expected_status=
         output += read_until(master, PROMPT)
         for command in commands:
             if isinstance(command, tuple):
-                command, marker = command
+                command, marker, *options = command
+                newline = options[0] if options else True
             else:
                 marker = PROMPT
-            os.write(master, command.encode() + b"\n")
-            output += read_until(master, marker)
+                newline = True
+            os.write(master, command.encode() + (b"\n" if newline else b""))
+            if marker is not None:
+                output += read_until(master, marker)
             if after_marker is not None:
                 after_marker(marker)
         os.write(master, final_command.encode() + b"\n")
@@ -129,6 +132,11 @@ TE_SHELL_EPOCH="$$:$TE_NONCE"
 # Preserve the user's entries and their relative order; capture status first.
 precmd_functions=(te_probe_precmd $precmd_functions)
 preexec_functions+=(te_probe_preexec)
+te_probe_buffer() {
+  print -r -- "buffer|${#BUFFER}|$TE_EVENT_SEQ" >> "$TE_EVENTS"
+}
+zle -N te_probe_buffer
+bindkey '^X^T' te_probe_buffer
 ZDOTDIR=$TE_ORIGINAL_ZDOTDIR
 ''')
         commands = ["tealias", "tefunction", "cd / && print -r -- CWD:$PWD",
@@ -225,6 +233,30 @@ ZDOTDIR=$TE_ORIGINAL_ZDOTDIR
                 < continuation_output.index(b"TEF|end|1|"))
         print(json.dumps({"case": "continuation_before_command_start",
                           "continuation_before_start_fence": True}))
+        events.write_text("", encoding="utf-8")
+        def check_pending_buffer(marker):
+            if marker is not None:
+                return
+            deadline = time.monotonic() + 4
+            while time.monotonic() < deadline:
+                pending = events.read_text(encoding="utf-8").splitlines()
+                if "buffer|12|0" in pending:
+                    assert pending.count("buffer|12|0") == 1
+                    pending_ends = [line for line in pending if line.startswith("end|")]
+                    assert len(pending_ends) == 1 and pending_ends[0].startswith("end|0|")
+                    assert not any(line.startswith("start|") for line in pending)
+                    return
+                time.sleep(0.01)
+            raise AssertionError("ZLE buffer observation unavailable")
+
+        run_shell(env, [("TE_BUFFER=ok\x18\x14", None, False),
+                        ("\x15", None, False)], after_marker=check_pending_buffer)
+        buffer_lines = events.read_text(encoding="utf-8").splitlines()
+        assert "buffer|12|0" in buffer_lines
+        buffer_starts = [line for line in buffer_lines if line.startswith("start|")]
+        assert len(buffer_starts) == 1 and "exit" in buffer_starts[0]
+        print(json.dumps({"case": "zle_buffer_before_enter", "buffer_length": 12,
+                          "no_command_start_while_pending": True}))
 
 
 if __name__ == "__main__":
