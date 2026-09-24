@@ -26,6 +26,14 @@ public final class ManagedTmux: @unchecked Sendable {
         public let pipeConnected: Bool
     }
 
+    public struct ScreenMetadata: Equatable, Sendable {
+        public let columns: Int
+        public let rows: Int
+        public let cursorX: Int
+        public let cursorY: Int
+        public let alternateScreen: Bool
+    }
+
     public enum Failure: Error {
         case unsafeRoot, tmuxUnavailable, socketCollision, staleSession, invalidPane, commandFailed,
              launchIndeterminate
@@ -141,6 +149,29 @@ public final class ManagedTmux: @unchecked Sendable {
         guard !isLaunchIndeterminate(ref.id) else { throw Failure.launchIndeterminate }
         try verify(binding, expectedPipePID: gates[ref.id]?.pipePID)
         return binding
+    }
+
+    /// Point-in-time tmux grid metadata; no screen text or history leaves this API.
+    public func screenMetadata(_ ref: SessionRef) throws -> ScreenMetadata {
+        lock.lock()
+        defer { lock.unlock() }
+        let binding = try activeBinding(ref)
+        guard !isLaunchIndeterminate(ref.id) else { throw Failure.launchIndeterminate }
+        let pipePID = gates[ref.id]?.pipePID
+        try verify(binding, expectedPipePID: pipePID)
+        let format = "#{session_id}\t#{pane_id}\t#{pane_pid}\t#{pane_width}\t#{pane_height}\t#{cursor_x}\t#{cursor_y}\t#{alternate_on}"
+        let output = try run(["display-message", "-p", "-t", binding.paneID, format])
+        let fields = output.trimmingCharacters(in: .newlines)
+            .split(separator: "\t", omittingEmptySubsequences: false)
+        guard fields.count == 8, fields[0] == binding.sessionID, fields[1] == binding.paneID,
+              fields[2] == String(binding.panePID),
+              let columns = Int(fields[3]), columns > 0, let rows = Int(fields[4]), rows > 0,
+              let cursorX = Int(fields[5]), cursorX >= 0,
+              let cursorY = Int(fields[6]), cursorY >= 0,
+              fields[7] == "0" || fields[7] == "1" else { throw Failure.invalidPane }
+        try verify(binding, expectedPipePID: pipePID)
+        return ScreenMetadata(columns: columns, rows: rows, cursorX: cursorX, cursorY: cursorY,
+                              alternateScreen: fields[7] == "1")
     }
 
     public func armCapture(_ ref: SessionRef, sinkExecutable: URL, maxBytes: Int) throws -> CaptureGate {

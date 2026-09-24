@@ -115,6 +115,19 @@ func mutateFixture(_ arguments: [String], socketPath: String = secondBinding.soc
     guard process.terminationStatus == 0 else { throw CocoaError(.fileWriteUnknown) }
 }
 
+let initialScreen = try manager.screenMetadata(second)
+try require(initialScreen.columns > 0 && initialScreen.rows > 0 &&
+            initialScreen.cursorX >= 0 && initialScreen.cursorY >= 0 &&
+            !initialScreen.alternateScreen, "initial private screen metadata")
+try mutateFixture(["resize-window", "-t", secondBinding.sessionID, "-x", "93", "-y", "27"])
+let resizedScreen = try manager.screenMetadata(second)
+try require(resizedScreen.columns == 93 && resizedScreen.rows == 27,
+            "private screen geometry after resize")
+do {
+    _ = try manager.screenMetadata(SessionRef(id: second.id, generation: 2))
+    throw CheckFailure(name: "screen metadata accepted stale generation")
+} catch ManagedTmux.Failure.staleSession {}
+
 let workload = SessionRef(id: UUID(), generation: 1)
 let workloadBinding = try manager.create(workload)
 do {
@@ -249,6 +262,22 @@ let shellVerified = try manager.revalidate(shellRef)
 try require(shellVerified == shellBinding, "private shell binding after commands")
 let neighborAfterShell = try panePID(secondBinding)
 try require(neighborAfterShell == secondPID, "neighbor PID after private shell")
+try mutateFixture(["send-keys", "-l", "-t", shellBinding.paneID, "printf '\\033[?1049h'"])
+try mutateFixture(["send-keys", "-t", shellBinding.paneID, "Enter"])
+var alternateScreen = try manager.screenMetadata(shellRef)
+for _ in 0..<100 where !alternateScreen.alternateScreen {
+    usleep(20_000)
+    alternateScreen = try manager.screenMetadata(shellRef)
+}
+try require(alternateScreen.alternateScreen, "private alternate screen entered")
+try mutateFixture(["send-keys", "-l", "-t", shellBinding.paneID, "printf '\\033[?1049l'"])
+try mutateFixture(["send-keys", "-t", shellBinding.paneID, "Enter"])
+var normalScreen = try manager.screenMetadata(shellRef)
+for _ in 0..<100 where normalScreen.alternateScreen {
+    usleep(20_000)
+    normalScreen = try manager.screenMetadata(shellRef)
+}
+try require(!normalScreen.alternateScreen, "private alternate screen exited")
 do {
     try FileManager.default.setAttributes([.posixPermissions: 0o500],
                                           ofItemAtPath: shellCaptureDir.path)
@@ -268,6 +297,10 @@ do {
 do {
     _ = try manager.revalidate(shellRef)
     throw CheckFailure(name: "dead capture sink retained valid binding")
+} catch ManagedTmux.Failure.invalidPane {}
+do {
+    _ = try manager.screenMetadata(shellRef)
+    throw CheckFailure(name: "screen metadata accepted dead capture sink")
 } catch ManagedTmux.Failure.invalidPane {}
 try mutateFixture(["send-keys", "-l", "-t", shellBinding.paneID, "exit"])
 try mutateFixture(["send-keys", "-t", shellBinding.paneID, "Enter"])
@@ -319,6 +352,10 @@ try require(replacementPID != secondPID, "respawn changed pane PID")
 do {
     _ = try manager.revalidate(second)
     throw CheckFailure(name: "replaced pane process retained old binding")
+} catch ManagedTmux.Failure.invalidPane {}
+do {
+    _ = try manager.screenMetadata(second)
+    throw CheckFailure(name: "screen metadata accepted replaced pane")
 } catch ManagedTmux.Failure.invalidPane {}
 do {
     try manager.close(second)
@@ -436,4 +473,4 @@ try failureManager.close(beforeRef)
 let peerAfterPlaceholderClose = try failureManager.revalidate(failurePeer)
 try require(peerAfterPlaceholderClose == failurePeerBinding, "peer survived exact placeholder close")
 
-print("private_namespace=PASS capture_gate=PASS synthetic_workload=PASS capture_observation=PASS owner_quota_gap=PASS dead_sink_detection=PASS guarded_launch=PASS stale_pid_launch=PASS private_shell_state=PASS private_shell_exit=PASS no_arg_rejected=PASS pipe_replacement=PASS foreign_pipe=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS atomic_stale_close=PASS lost_ack_quarantine=PASS pre_dispatch_quarantine=PASS healthy_anchor=PASS missing_tmux=PASS socket_collision=PASS")
+print("private_namespace=PASS capture_gate=PASS synthetic_workload=PASS capture_observation=PASS screen_metadata=PASS owner_quota_gap=PASS dead_sink_detection=PASS guarded_launch=PASS stale_pid_launch=PASS private_shell_state=PASS private_shell_exit=PASS no_arg_rejected=PASS pipe_replacement=PASS foreign_pipe=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS atomic_stale_close=PASS lost_ack_quarantine=PASS pre_dispatch_quarantine=PASS healthy_anchor=PASS missing_tmux=PASS socket_collision=PASS")
