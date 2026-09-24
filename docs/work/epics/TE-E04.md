@@ -25,6 +25,6 @@ TE-C01..07, TE-C09; clipboard export только opt-in. Текущий main di
 
 ## Текущее состояние
 
-Read-only discovery и локальный выбор точной surface реализованы. В TE-T015 добавлен opt-in путь одного bounded screen snapshot через адресный Apple Event и clipboard с server-side grant; живой MCP-тест подтвердил чтение трёх разных surface и точное восстановление доступных clipboard types/bytes в одном вызове. Input и непрерывный захват отсутствуют. Установленный Ghostty 1.3.1 имеет source-confirmed FD leak на export, поэтому частый polling закрыт лимитом.
+Read-only discovery и локальный выбор точной surface реализованы. В TE-T015 добавлен opt-in путь bounded screen/scrollback snapshots через адресный Apple Event и clipboard с server-side grant; живой MCP-тест подтвердил screen read трёх разных surface и точное восстановление доступных clipboard types/bytes в одном вызове. Живой scrollback на выбранной pane не получен: сначала clipboard нельзя было сохранить, после его замены Ghostty не поместил путь экспорта в clipboard, в том числе после `seq 1 200`. Причина последнего отказа не доказана; синтетический scrollback PASS не закрывает этот gate. Input и непрерывный захват отсутствуют. Установленный Ghostty 1.3.1 имеет source-confirmed FD leak на export, поэтому частый polling закрыт лимитом.
 
 [Native contract](../../architecture/capture-and-commands.md), [privacy](../../architecture/security.md).
