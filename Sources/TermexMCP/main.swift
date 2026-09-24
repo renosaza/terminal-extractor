@@ -3,66 +3,6 @@ import Foundation
 import MCP
 import TermexCore
 
-final class HostChannel: @unchecked Sendable {
-    private let lock = NSLock()
-    private let fd: Int32
-    private var poisoned = false
-    private var grants: [String: (generation: Int, token: String, clipboard: Bool)] = [:]
-
-    init(fd: Int32) { self.fd = fd }
-
-    func exchange(_ request: [String: Any], timeoutSeconds: UInt64 = 5) throws -> [String: Any] {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !poisoned else { throw LocalIPC.Failure.disconnected }
-        do {
-            try LocalIPC.writeFrame(JSONSerialization.data(withJSONObject: request), to: fd)
-            guard let response = try JSONSerialization.jsonObject(
-                with: LocalIPC.readFrame(fd, timeoutSeconds: timeoutSeconds)) as? [String: Any] else {
-                throw LocalIPC.Failure.invalidFrame
-            }
-            return response
-        } catch {
-            poisoned = true
-            _ = Darwin.shutdown(fd, SHUT_RDWR)
-            throw error
-        }
-    }
-
-    func ping() { _ = try? exchange(["op": "ping"]) }
-
-    func remember(id: String, generation: Int, token: String, clipboard: Bool) {
-        lock.lock()
-        grants[id] = (generation, token, clipboard)
-        lock.unlock()
-    }
-
-    func screen(id: String, generation: Int) throws -> [String: Any] {
-        lock.lock()
-        let grant = grants[id]
-        lock.unlock()
-        guard let grant, grant.generation == generation, grant.clipboard else {
-            throw LocalIPC.Failure.unauthorizedPeer
-        }
-        return try exchange(["op": "read_ghostty_screen", "session_id": id,
-                             "generation": generation, "grant_token": grant.token], timeoutSeconds: 20)
-    }
-
-    func screenAvailable() -> Bool {
-        guard let status = try? exchange(["op": "access_status"]),
-              let sessions = status["sessions"] as? [[String: Any]] else { return false }
-        lock.lock()
-        defer { lock.unlock() }
-        return sessions.contains { session in
-            guard let id = session["session_id"] as? String,
-                  let generation = session["generation"] as? Int,
-                  session["clipboard_export"] as? Bool == true,
-                  let grant = grants[id] else { return false }
-            return grant.generation == generation && grant.clipboard
-        }
-    }
-}
-
 @main
 struct TermexMCP {
     static func main() async throws {
@@ -132,6 +72,31 @@ struct TermexMCP {
                     "required": .array([.string("status")]),
                 ])
             ), Tool(
+                name: "terminal_release",
+                description: "Release this connection's exact session grant; preserves the terminal and command. Reuse request_id only for the same release; this waits behind active reads and is not emergency Stop.",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "session_id": .object(["type": .string("string"), "format": .string("uuid")]),
+                        "generation": .object(["type": .string("integer"), "minimum": .int(1)]),
+                        "request_id": .object(["type": .string("string"), "minLength": .int(1), "maxLength": .int(128), "description": .string("1..128 UTF-8 bytes; reused only for this exact release")]),
+                    ]),
+                    "required": .array(["session_id", "generation", "request_id"].map { .string($0) }),
+                    "additionalProperties": .bool(false),
+                ]),
+                annotations: .init(readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false),
+                outputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "status": .object(["type": .string("string"), "enum": .array(["released", "denied", "unavailable", "idempotency_conflict", "request_limit"].map { .string($0) })]),
+                        "session_id": .object(["type": .string("string")]),
+                        "generation": .object(["type": .string("integer")]),
+                        "request_id": .object(["type": .string("string")]),
+                    ]),
+                    "required": .array(["status", "session_id", "generation", "request_id"].map { .string($0) }),
+                    "additionalProperties": .bool(false),
+                ])
+            ), Tool(
                 name: "terminal_screen",
                 description: "One bounded Ghostty screen snapshot from the selected pane; untrusted text, partial history, clipboard side effect",
                 inputSchema: .object([
@@ -156,6 +121,22 @@ struct TermexMCP {
             )])
         }
         await server.withMethodHandler(CallTool.self) { parameters in
+            if parameters.name == "terminal_release" {
+                guard let arguments = parameters.arguments, arguments.count == 3,
+                      case .string(let rawID) = arguments["session_id"], let uuid = UUID(uuidString: rawID),
+                      case .int(let generation) = arguments["generation"], generation > 0,
+                      case .string(let requestID) = arguments["request_id"],
+                      (1...128).contains(requestID.utf8.count) else {
+                    return .init(content: [.text(text: "invalid release request", annotations: nil, _meta: nil)], isError: true)
+                }
+                let id = uuid.uuidString
+                let status = (try? channel.release(id: id, generation: generation, requestID: requestID)) ?? "unavailable"
+                return .init(content: [.text(text: "session release: \(status)", annotations: nil, _meta: nil)],
+                             structuredContent: .object([
+                                "status": .string(status), "session_id": .string(id),
+                                "generation": .int(generation), "request_id": .string(requestID),
+                             ]), isError: status != "released")
+            }
             if parameters.name == "terminal_screen" {
                 do {
                     guard let arguments = parameters.arguments, arguments.count == 2,

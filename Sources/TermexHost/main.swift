@@ -105,6 +105,18 @@ let config = try LocalConfig.load(at: configURL, requireExisting: explicitConfig
             guard request.count == 1 else { throw LocalIPC.Failure.invalidFrame }
             let response = try JSONSerialization.data(withJSONObject: ["sessions": grants.list(connection: connectionID)])
             try LocalIPC.writeFrame(response, to: client)
+        case "release_session":
+            guard request.count == 4,
+                  let idText = request["session_id"] as? String, let id = UUID(uuidString: idText),
+                  let number = request["generation"] as? NSNumber,
+                  CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  !["f", "d"].contains(String(cString: number.objCType)),
+                  let generation = request["generation"] as? Int, generation > 0,
+                  let tokenText = request["grant_token"] as? String,
+                  let token = UUID(uuidString: tokenText) else { throw LocalIPC.Failure.invalidFrame }
+            let released = grants.release(connection: connectionID,
+                                          session: SessionRef(id: id, generation: UInt64(generation)), token: token)
+            try LocalIPC.writeFrame(JSONSerialization.data(withJSONObject: ["released": released]), to: client)
         case "read_ghostty_screen":
             guard request.count == 4,
                   let idText = request["session_id"] as? String, let id = UUID(uuidString: idText),

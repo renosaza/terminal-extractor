@@ -49,6 +49,16 @@ final class ConnectionGrants: @unchecked Sendable {
             (!clipboardExport || grant.result.clipboardExport)
     }
 
+    func release(connection: UUID, session: SessionRef, token: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let grant = entries[connection]?[session.id], grant.result.session == session,
+              grant.token == token, grant.epoch == epoch else { return false }
+        entries[connection]?.removeValue(forKey: session.id)
+        if writers[session.id] == connection { writers.removeValue(forKey: session.id) }
+        return true
+    }
+
     func revokeAll() -> UInt64 {
         lock.lock()
         defer { lock.unlock() }
