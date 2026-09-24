@@ -117,9 +117,33 @@ func mutateFixture(_ arguments: [String]) throws {
 
 let workload = SessionRef(id: UUID(), generation: 1)
 let workloadBinding = try manager.create(workload)
-_ = try manager.armCapture(workload, sinkExecutable: sink, maxBytes: 64)
-try mutateFixture(["respawn-pane", "-k", "-t", workloadBinding.paneID,
-                   "/bin/sh", "-c", "printf 'TE_GATE_OK\\n'; sleep 2"])
+do {
+    _ = try manager.launchCapturedProcess(workload, gate: gate,
+                                          executableURL: URL(fileURLWithPath: "/bin/sleep"), arguments: ["3600"])
+    throw CheckFailure(name: "cross-session launch gate was accepted")
+} catch ManagedTmux.Failure.staleSession {}
+let workloadGate = try manager.armCapture(workload, sinkExecutable: sink, maxBytes: 64)
+do {
+    _ = try manager.launchCapturedProcess(workload, gate: gate,
+                                          executableURL: URL(fileURLWithPath: "/bin/sleep"), arguments: ["3600"])
+    throw CheckFailure(name: "wrong launch gate was accepted")
+} catch ManagedTmux.Failure.staleSession {}
+do {
+    _ = try manager.launchCapturedProcess(workload, gate: workloadGate,
+                                          executableURL: URL(fileURLWithPath: "/bin/sleep"), arguments: [])
+    throw CheckFailure(name: "shell-interpreted no-argument launch was accepted")
+} catch ManagedTmux.Failure.commandFailed {}
+let launched = try manager.launchCapturedProcess(workload, gate: workloadGate,
+    executableURL: URL(fileURLWithPath: "/bin/sh"),
+    arguments: ["-c", "printf 'TE_GATE_OK\\n'; exec /bin/sleep 3600"])
+try require(launched.panePID != workloadBinding.panePID, "launch changed pane PID")
+let launchedVerified = try manager.revalidate(workload)
+try require(launchedVerified == launched, "launched pane binding")
+do {
+    _ = try manager.launchCapturedProcess(workload, gate: workloadGate,
+                                          executableURL: URL(fileURLWithPath: "/bin/sleep"), arguments: ["3600"])
+    throw CheckFailure(name: "second launch was accepted")
+} catch ManagedTmux.Failure.staleSession {}
 let syntheticMarker = Data("TE_GATE_OK".utf8)
 var observedWorkload = false
 for _ in 0..<100 {
@@ -134,6 +158,11 @@ for _ in 0..<100 {
     usleep(20_000)
 }
 try require(observedWorkload, "owner gate captured synthetic workload")
+let workloadObservation = try manager.captureObservation(workload, gate: workloadGate)
+try require(workloadObservation.observedBytes > 0 && workloadObservation.pipeConnected &&
+            !workloadObservation.gapObserved, "launched workload metadata")
+let neighborPID = try panePID(secondBinding)
+try require(neighborPID == secondPID, "neighbor PID after launch")
 try mutateFixture(["kill-session", "-t", workloadBinding.sessionID])
 
 try mutateFixture(["pipe-pane", "-O", "-t", secondBinding.paneID, "sleep 60"])
@@ -171,4 +200,4 @@ do {
 } catch ManagedTmux.Failure.commandFailed {}
 catch ManagedTmux.Failure.socketCollision {}
 
-print("private_namespace=PASS capture_gate=PASS synthetic_workload=PASS capture_observation=PASS foreign_pipe=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS atomic_stale_close=PASS missing_tmux=PASS socket_collision=PASS")
+print("private_namespace=PASS capture_gate=PASS synthetic_workload=PASS capture_observation=PASS guarded_launch=PASS no_arg_rejected=PASS foreign_pipe=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS atomic_stale_close=PASS missing_tmux=PASS socket_collision=PASS")

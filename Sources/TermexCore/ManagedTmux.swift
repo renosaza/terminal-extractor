@@ -48,7 +48,7 @@ public final class ManagedTmux: @unchecked Sendable {
     private var socketIdentity: Identity?
     private var bindings: [UUID: (generation: UInt64, binding: Binding, active: Bool)] = [:]
     private var gates: [UUID: (gate: CaptureGate, paths: [String], pipePID: Int32, limit: Int,
-                               directory: Identity, segment: Identity)] = [:]
+                               directory: Identity, segment: Identity, launchAttempted: Bool)] = [:]
 
     public init(root: URL, tmuxExecutable: URL) throws {
         guard root.isFileURL, tmuxExecutable.isFileURL,
@@ -171,7 +171,7 @@ public final class ManagedTmux: @unchecked Sendable {
                         throw Failure.invalidPane
                     }
                     let gate = CaptureGate(id: UUID(), sessionID: ref.id, generation: ref.generation)
-                    gates[ref.id] = (gate, paths, pipePID, maxBytes, Identity(info), Identity(segmentInfo))
+                    gates[ref.id] = (gate, paths, pipePID, maxBytes, Identity(info), Identity(segmentInfo), false)
                     return gate
                 }
                 usleep(20_000)
@@ -179,6 +179,40 @@ public final class ManagedTmux: @unchecked Sendable {
         } catch { throw error }
         // ponytail: leave an uncertain pipe for exact-session cleanup; a blind detach could close another owner's pipe.
         throw Failure.commandFailed
+    }
+
+    /// One-shot transition from the private placeholder; an uncertain launch is never retried.
+    public func launchCapturedProcess(_ ref: SessionRef, gate: CaptureGate,
+                                      executableURL: URL, arguments: [String]) throws -> Binding {
+        lock.lock()
+        defer { lock.unlock() }
+        let binding = try activeBinding(ref)
+        guard var state = gates[ref.id], state.gate == gate, !state.launchAttempted else {
+            throw Failure.staleSession
+        }
+        try verify(binding)
+        let program = try checkedExecutable(executableURL)
+        // With no argument tmux executes a shell-command via /bin/sh instead of direct exec.
+        guard !arguments.isEmpty,
+              arguments.allSatisfy({ !$0.contains("\0") && !$0.contains("\n") && !$0.contains("\r") }) else {
+            throw Failure.commandFailed
+        }
+        state.launchAttempted = true
+        gates[ref.id] = state
+        let command = ([program] + arguments).map(Self.shellQuote).joined(separator: " ")
+        let condition = "#{&&:#{==:#{session_id},\(binding.sessionID)},#{&&:#{==:#{session_name},\(binding.sessionName)},#{&&:#{==:#{pane_pid},\(binding.panePID)},#{==:#{pane_pipe_pid},\(state.pipePID)}}}}"
+        let start = "respawn-pane -k -t \(binding.paneID) \(command); display-message -p -t \(binding.paneID) '#{session_id}\t#{pane_id}\t#{pane_pid}'"
+        let output = try run(["if-shell", "-t", binding.paneID, "-F", condition,
+                              start, "display-message -p termex_stale_binding"])
+        guard let details = Self.parseDetails(output), details.0 == binding.sessionID,
+              details.1 == binding.paneID, details.2 != binding.panePID else {
+            throw Failure.invalidPane
+        }
+        let updated = Binding(sessionName: binding.sessionName, sessionID: binding.sessionID,
+                              paneID: binding.paneID, panePID: details.2, socketPath: binding.socketPath)
+        try verify(updated)
+        bindings[ref.id]?.binding = updated
+        return updated
     }
 
     /// A metadata snapshot of one private segment, not a completeness or durable journal claim.
