@@ -22,6 +22,8 @@ status: draft
 
 `swift run TermexManagedTmuxCheck` проверяет только private tmux namespace и lifecycle двух detached служебных `/bin/sleep` pane. Требуется локальный tmux (`/opt/homebrew/bin/tmux` по умолчанию, либо `TERMEX_TMUX_BIN`); тест создаёт временный каталог 0700 в `/tmp` и удаляет его после закрытия своих сессий. Он не подключает Ghostty/Terminal.app и не создаёт пользовательский shell.
 
+Для отдельной ручной проверки видимого attach после явного локального согласия: `sh probes/tmux/visible_attach_probe.sh` **в выбранной тестовой Ghostty pane**. Скрипт временно подключает новый private tmux shell поверх исходного, записывает только пустые marker files в каталоге 0700 и очищает свой namespace после `tmux detach-client`. Внутри tmux выполнить `printf 'TE_GUI_ATTACH_%s\n' OK`, затем `tmux detach-client`; итог содержит только PASS/NOT_OBSERVED для screen и pipe. Не вводить секреты. `--self-check` использует синтетический workload без GUI. Это не путь к истории исходного Ghostty shell и не продуктовый attach.
+
 Аналогично для Terminal.app: `.build/debug/termex-host --list-terminal`, `python3 Tests/integration/terminal_discovery.py`, `.build/debug/termex-host --resolve-terminal <app-instance-id> <window-id> <tty>`. Если Terminal.app не запущен, список пуст и приложение не запускается. TTY может переиспользоваться: `resolve` — локальная диагностика, не право на read/input и не устойчивый session binding.
 
 Будущие области кода: session-registry, adapters/terminal-app, adapters/ghostty, adapters/tmux, shell-integration, journal, compression и host-ui. Это план модулей, не существующее продуктовое дерево.
