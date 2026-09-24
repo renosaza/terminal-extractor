@@ -17,15 +17,23 @@ public enum GhosttyScreenExport {
     private static let state = State()
 
     public static func read(_ target: GhosttyTarget, authorized: () -> Bool) throws -> Snapshot {
+        try readForExport(appInstanceID: target.appInstanceID, board: .general,
+                          root: (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath,
+                          authorized: authorized) {
+            try GhosttyDiscovery.exportScreen(target)
+        }
+    }
+
+    package static func readForExport(appInstanceID: String, board: NSPasteboard, root: String,
+                                      authorized: () -> Bool, export: () throws -> Void) throws -> Snapshot {
         state.lock.lock()
         defer { state.lock.unlock() }
         let now = DispatchTime.now().uptimeNanoseconds
         // ponytail: cap the installed Ghostty export FD leak; remove when a fixed release is verified.
-        guard state.counts[target.appInstanceID, default: 0] < 64,
+        guard state.counts[appInstanceID, default: 0] < 64,
               (state.lastAction == 0 || (now >= state.lastAction && now - state.lastAction >= 5_000_000_000)) else {
             throw Failure.rateLimited
         }
-        let board = NSPasteboard.general
         let before = board.changeCount
         let existingItems = board.pasteboardItems ?? []
         guard existingItems.count <= 32,
@@ -53,15 +61,14 @@ public enum GhosttyScreenExport {
             }
             return item
         }
-        let root = (NSTemporaryDirectory() as NSString).resolvingSymlinksInPath
         let beforeDirectories = try exportDirectories(in: root)
         guard board.changeCount == before else { throw Failure.clipboardConflict }
         guard authorized() else { throw Failure.unavailable }
         guard board.changeCount == before else { throw Failure.clipboardConflict }
         let started = Date()
-        state.counts[target.appInstanceID, default: 0] += 1
+        state.counts[appInstanceID, default: 0] += 1
         state.lastAction = now
-        let action = Result { try GhosttyDiscovery.exportScreen(target) }
+        let action = Result { try export() }
         let observedAt = Date()
         let after = board.changeCount
         guard after != before, let path = board.string(forType: .string) else {
@@ -76,6 +83,7 @@ public enum GhosttyScreenExport {
         }
         board.clearContents()
         guard restored.isEmpty || board.writeObjects(restored) else { throw Failure.clipboardConflict }
+        guard authorized() else { throw Failure.unavailable }
         try action.get()
         let created = try newDirectories.get()
         guard created.count == 1, created.contains(URL(fileURLWithPath: path).deletingLastPathComponent().lastPathComponent) else {
