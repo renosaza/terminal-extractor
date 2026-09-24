@@ -210,9 +210,19 @@ with tempfile.TemporaryDirectory(prefix="termex-ipc-") as temporary:
                 excess.connect(path)
                 assert excess.recv(1) == b"", "ninth client was not rejected"
             assert stop(path) == {"stopped": True, "epoch": 5}, "Stop was blocked by eight clients"
+            for connection in holders:
+                assert connection.recv(1) == b"", "Stop left a client connected"
         finally:
             for connection in holders:
                 connection.close()
+        with socket.socket(socket.AF_UNIX) as active:
+            active.settimeout(5)
+            active.connect(path)
+            active.sendall(struct.pack("!I", 16) + b"x")
+            started = time.monotonic()
+            assert stop(path) == {"stopped": True, "epoch": 6}
+            assert time.monotonic() - started < 3, "partial request delayed Stop"
+            assert active.recv(1) == b"", "Stop left an active client connected"
         for attempt in range(20):
             try:
                 assert exchange(path, b'{"op":"ping"}') == {"ok": True}

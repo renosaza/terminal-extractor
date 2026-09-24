@@ -137,9 +137,9 @@ let config = try LocalConfig.load(at: configURL, requireExisting: explicitConfig
                 grants.check(connection: connectionID, session: session, token: token,
                              scope: .read, clipboardExport: true)
             }
-            guard try consent.revalidate(session) == target,
-                  grants.check(connection: connectionID, session: session, token: token,
-                               scope: .read, clipboardExport: true) else {
+            guard grants.check(connection: connectionID, session: session, token: token,
+                               scope: .read, clipboardExport: true),
+                  try consent.revalidate(session) == target else {
                 throw LocalIPC.Failure.unauthorizedPeer
             }
             let response = try JSONSerialization.data(withJSONObject: [
@@ -219,6 +219,13 @@ final class ClientPool: @unchecked Sendable {
         for fd in clients.keys { _ = Darwin.shutdown(fd, SHUT_RDWR) }
     }
 
+    func revokeAndDisconnect() -> UInt64 {
+        lock.lock()
+        defer { lock.unlock() }
+        for fd in clients.keys { _ = Darwin.shutdown(fd, SHUT_RDWR) }
+        return grants.revokeAll()
+    }
+
     func wait() { _ = group.wait(timeout: .now() + 5) }
 }
 
@@ -235,7 +242,7 @@ while stopping.wait(timeout: .now()) == .timedOut {
     if pending[0].revents & Int16(POLLIN) != 0 {
         do {
             let client = try LocalIPC.accept(stopListener)
-            let epoch = grants.revokeAll()
+            let epoch = pool.revokeAndDisconnect()
             try? LocalIPC.writeFrame(try JSONSerialization.data(withJSONObject: ["stopped": true, "epoch": epoch]), to: client)
             Darwin.close(client)
         } catch LocalIPC.Failure.unauthorizedPeer { continue }
