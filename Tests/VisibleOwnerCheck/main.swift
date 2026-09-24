@@ -76,10 +76,16 @@ guard captured && observation.pipeConnected && !observation.gapObserved,
 try manager.close(ref)
 closed = true
 let cleanMarker = root.appendingPathComponent(directories[0]).appendingPathComponent("clean_eof")
-for _ in 0..<100 where !FileManager.default.fileExists(atPath: cleanMarker.path) {
+let closedRecord = root.appendingPathComponent(directories[0]).appendingPathComponent("closed")
+for _ in 0..<100 where !FileManager.default.fileExists(atPath: cleanMarker.path) ||
+                       !FileManager.default.fileExists(atPath: closedRecord.path) {
     Thread.sleep(forTimeInterval: 0.02)
 }
 cleanEOF = FileManager.default.fileExists(atPath: cleanMarker.path)
-guard cleanEOF else { throw CheckFailure.failed }
+let segmentSize = try FileManager.default.attributesOfItem(atPath: segment.path)[.size] as? NSNumber
+let record = try String(contentsOf: closedRecord, encoding: .utf8)
+guard cleanEOF, let segmentSize, record == "\(segmentSize.uint64Value) clean" else {
+    throw CheckFailure.failed
+}
 print("private_owner=PASS capture_pipe_marker=PASS screen_metadata=PASS clean_fixture_close=PASS" +
       (selfCheck ? "" : " attach_return=PASS"))
