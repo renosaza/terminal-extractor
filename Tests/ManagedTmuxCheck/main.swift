@@ -33,6 +33,10 @@ defer { try? manager.close(first); try? manager.close(second) }
 
 let firstBinding = try manager.create(first)
 let secondBinding = try manager.create(second)
+let sink = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
+    .appendingPathComponent("termex-capture-sink")
+let gate = try manager.armCapture(first, sinkExecutable: sink, maxBytes: 64)
+try require(gate.sessionID == first.id && gate.generation == first.generation, "capture gate session binding")
 do {
     _ = try ManagedTmux(root: root, tmuxExecutable: executable)
     throw CheckFailure(name: "existing private socket was adopted")
@@ -92,6 +96,12 @@ func mutateFixture(_ arguments: [String]) throws {
     guard process.terminationStatus == 0 else { throw CocoaError(.fileWriteUnknown) }
 }
 
+try mutateFixture(["pipe-pane", "-O", "-t", secondBinding.paneID, "cat >/dev/null"])
+do {
+    _ = try manager.armCapture(second, sinkExecutable: sink, maxBytes: 64)
+    throw CheckFailure(name: "existing pane pipe was adopted")
+} catch ManagedTmux.Failure.invalidPane {}
+try mutateFixture(["pipe-pane", "-t", secondBinding.paneID])
 try mutateFixture(["respawn-pane", "-k", "-t", secondBinding.paneID, "/bin/sleep", "3600"])
 let replacementPID = try panePID(secondBinding)
 try require(replacementPID != secondPID, "respawn changed pane PID")
@@ -112,4 +122,4 @@ do {
 } catch ManagedTmux.Failure.commandFailed {}
 catch ManagedTmux.Failure.socketCollision {}
 
-print("private_namespace=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS atomic_stale_close=PASS missing_tmux=PASS socket_collision=PASS")
+print("private_namespace=PASS capture_gate=PASS foreign_pipe=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS atomic_stale_close=PASS missing_tmux=PASS socket_collision=PASS")

@@ -11,6 +11,13 @@ public final class ManagedTmux: @unchecked Sendable {
         public let socketPath: String
     }
 
+    /// Capture bytes remain private; this only proves that the sink opened before workload.
+    public struct CaptureGate: Equatable, Sendable {
+        public let id: UUID
+        public let sessionID: UUID
+        public let generation: UInt64
+    }
+
     public enum Failure: Error {
         case unsafeRoot, tmuxUnavailable, socketCollision, staleSession, invalidPane, commandFailed
     }
@@ -32,6 +39,7 @@ public final class ManagedTmux: @unchecked Sendable {
     private let socket: String
     private var socketIdentity: Identity?
     private var bindings: [UUID: (generation: UInt64, binding: Binding, active: Bool)] = [:]
+    private var gates: [UUID: CaptureGate] = [:]
 
     public init(root: URL, tmuxExecutable: URL) throws {
         guard root.isFileURL, tmuxExecutable.isFileURL,
@@ -114,6 +122,44 @@ public final class ManagedTmux: @unchecked Sendable {
         return binding
     }
 
+    public func armCapture(_ ref: SessionRef, sinkExecutable: URL, maxBytes: Int) throws -> CaptureGate {
+        lock.lock()
+        defer { lock.unlock() }
+        guard (1...1_048_576).contains(maxBytes), gates[ref.id] == nil else { throw Failure.staleSession }
+        let binding = try activeBinding(ref)
+        try verify(binding)
+        guard try run(["display-message", "-p", "-t", binding.paneID, "#{pane_pipe}"]) == "0\n" else {
+            throw Failure.invalidPane
+        }
+        let sink = try checkedExecutable(sinkExecutable)
+        let directory = URL(fileURLWithPath: root)
+            .appendingPathComponent("capture-\(UUID().uuidString.lowercased())").path
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: false,
+                                                attributes: [.posixPermissions: 0o700])
+        guard let info = Self.fileStat(directory), info.st_mode & S_IFMT == S_IFDIR,
+              info.st_uid == getuid(), info.st_mode & 0o077 == 0 else { throw Failure.unsafeRoot }
+        let paths = ["segment", "ready", "gap", "clean_eof"].map {
+            URL(fileURLWithPath: directory).appendingPathComponent($0).path
+        }
+        let command = ([sink, "--sink"] + paths + [String(maxBytes)]).map(Self.shellQuote).joined(separator: " ")
+        do {
+            _ = try run(["pipe-pane", "-O", "-t", binding.paneID, "exec \(command)"])
+            let deadline = DispatchTime.now().uptimeNanoseconds + 5_000_000_000
+            while DispatchTime.now().uptimeNanoseconds < deadline {
+                if Self.privateMarker(paths[1]),
+                   try run(["display-message", "-p", "-t", binding.paneID, "#{pane_pipe}"]) == "1\n" {
+                    try verify(binding)
+                    let gate = CaptureGate(id: UUID(), sessionID: ref.id, generation: ref.generation)
+                    gates[ref.id] = gate
+                    return gate
+                }
+                usleep(20_000)
+            }
+        } catch { throw error }
+        _ = try? run(["pipe-pane", "-t", binding.paneID])
+        throw Failure.commandFailed
+    }
+
     public func close(_ ref: SessionRef) throws {
         lock.lock()
         defer { lock.unlock() }
@@ -128,6 +174,7 @@ public final class ManagedTmux: @unchecked Sendable {
         guard outcome == "termex_closed\n" else { throw Failure.invalidPane }
         try checkSocket(allowMissing: false)
         bindings[ref.id]?.active = false
+        gates.removeValue(forKey: ref.id)
     }
 
     private func activeBinding(_ ref: SessionRef) throws -> Binding {
@@ -179,6 +226,28 @@ public final class ManagedTmux: @unchecked Sendable {
     private static func fileStat(_ path: String) -> stat? {
         var info = stat()
         return lstat(path, &info) == 0 ? info : nil
+    }
+
+    private func checkedExecutable(_ url: URL) throws -> String {
+        guard url.isFileURL, url.path.hasPrefix("/"), url.path == url.standardizedFileURL.path else {
+            throw Failure.tmuxUnavailable
+        }
+        let path = url.resolvingSymlinksInPath().path
+        guard let info = Self.fileStat(path), info.st_mode & S_IFMT == S_IFREG,
+              info.st_mode & 0o111 != 0, info.st_uid == getuid() || info.st_uid == 0 else {
+            throw Failure.tmuxUnavailable
+        }
+        return path
+    }
+
+    private static func privateMarker(_ path: String) -> Bool {
+        guard let info = fileStat(path), info.st_mode & S_IFMT == S_IFREG,
+              info.st_uid == getuid(), info.st_mode & 0o077 == 0 else { return false }
+        return true
+    }
+
+    private static func shellQuote(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\\\"'\\\"'"))'"
     }
 
     private static func parseDetails(_ text: String) -> (String, String, Int32)? {

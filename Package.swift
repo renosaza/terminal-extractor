@@ -8,6 +8,7 @@ let package = Package(
         .executable(name: "termex-host", targets: ["TermexHost"]),
         .executable(name: "termex-mcp", targets: ["TermexMCP"]),
         .executable(name: "termex-consent", targets: ["TermexConsent"]),
+        .executable(name: "termex-capture-sink", targets: ["TermexCaptureSink"]),
     ],
     dependencies: [
         .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", exact: "0.12.1"),
@@ -16,6 +17,7 @@ let package = Package(
         .target(name: "TermexCore"),
         .executableTarget(name: "TermexHost", dependencies: ["TermexCore"]),
         .executableTarget(name: "TermexConsent"),
+        .executableTarget(name: "TermexCaptureSink"),
         .executableTarget(name: "TermexMCP", dependencies: [
             "TermexCore", .product(name: "MCP", package: "swift-sdk"),
         ]),
