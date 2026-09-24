@@ -74,13 +74,13 @@ public enum GhosttyScreenExport {
         guard board.changeCount == after, board.string(forType: .string) == path else {
             throw Failure.clipboardConflict
         }
+        board.clearContents()
+        guard restored.isEmpty || board.writeObjects(restored) else { throw Failure.clipboardConflict }
+        try action.get()
         let created = try newDirectories.get()
         guard created.count == 1, created.contains(URL(fileURLWithPath: path).deletingLastPathComponent().lastPathComponent) else {
             throw Failure.clipboardConflict
         }
-        board.clearContents()
-        guard restored.isEmpty || board.writeObjects(restored) else { throw Failure.clipboardConflict }
-        try action.get()
         let bytes = try GhosttyExportFile.read(path, in: root, createdAfter: started)
         let text = String(decoding: bytes, as: UTF8.self).unicodeScalars.filter {
             $0 == "\n" || $0 == "\t" ||

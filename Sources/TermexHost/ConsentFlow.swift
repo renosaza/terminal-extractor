@@ -159,6 +159,7 @@ final class ConsentFlow: @unchecked Sendable {
               let handle = UUID(uuidString: text), handles.contains(handle),
               let scopeText = reply["scope"] as? String,
               let scope = ConsentScope(rawValue: scopeText),
+              scope == .read,
               let clipboardExport = reply["clipboard_export"] as? Bool,
               !clipboardExport || clipboardExportAvailable else { throw Failure.invalidReply }
         let session = try registry.bindApproved(handle)

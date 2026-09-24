@@ -85,7 +85,6 @@ private func ask(_ request: Request) -> Approval? {
     alert.informativeText = "Choose one pane and scope. Screen export briefly changes the clipboard and may be visible to clipboard watchers. Input is unavailable."
     alert.accessoryView = accessory
     alert.addButton(withTitle: "Select for read")
-    alert.addButton(withTitle: "Select for read + control")
     alert.addButton(withTitle: "Cancel")
     app.activate(ignoringOtherApps: true)
     let response = alert.runModal()
@@ -94,9 +93,6 @@ private func ask(_ request: Request) -> Approval? {
     switch response {
     case .alertFirstButtonReturn:
         return Approval(handle: request.choices[index - 1].handle, scope: "read",
-                        clipboardExport: clipboard.state == .on && clipboard.isEnabled)
-    case .alertSecondButtonReturn:
-        return Approval(handle: request.choices[index - 1].handle, scope: "control",
                         clipboardExport: clipboard.state == .on && clipboard.isEnabled)
     default:
         return nil

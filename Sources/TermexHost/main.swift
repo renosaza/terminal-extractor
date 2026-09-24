@@ -155,12 +155,13 @@ defer { Darwin.close(stopListener); unlink(stopPath) }
 signal(SIGINT, SIG_IGN)
 signal(SIGTERM, SIG_IGN)
 let stopping = DispatchSemaphore(value: 0)
-let stop = [SIGINT, SIGTERM].map { value in
+nonisolated func installStopSignal(_ value: Int32, stopping: DispatchSemaphore) -> any DispatchSourceSignal {
     let source = DispatchSource.makeSignalSource(signal: value, queue: .global())
     source.setEventHandler { stopping.signal() }
     source.resume()
     return source
 }
+let stop = [SIGINT, SIGTERM].map { installStopSignal($0, stopping: stopping) }
 _ = stop
 fputs("termex-host ready\n", stderr)
 

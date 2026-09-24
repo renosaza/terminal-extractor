@@ -4,7 +4,7 @@ status: draft
 ---
 # Разработка и выпуск: текущее состояние
 
-В репозитории есть документация, feasibility probes и начальная product SwiftPM foundation: CLI host, MCP gateway, AppKit helper выбора Ghostty, локальные настройки и `terminal_capabilities`/`terminal_request_access`/`terminal_screen`. Последний — opt-in ограниченный снимок одной выбранной surface через clipboard; по умолчанию config закрывает этот путь, а живой продуктовый export ещё не прошёл приёмку. Input и полноценный GUI host отсутствуют. Installer, release binary и CI отсутствуют. `probes/mcp/Package.swift` собирает отдельный тестовый MCP stdio server. Предлагаемый стек — [архитектура](../architecture/README.md), текущее состояние — [TE-E02](../work/epics/TE-E02.md).
+В репозитории есть документация, feasibility probes и начальная product SwiftPM foundation: CLI host, MCP gateway, AppKit helper выбора Ghostty, локальные настройки и `terminal_capabilities`/`terminal_request_access`/`terminal_screen`. Последний — opt-in ограниченный снимок одной выбранной surface через clipboard; по умолчанию config закрывает этот путь. Живой MCP-тест подтвердил чтение трёх surface и восстановление доступных clipboard types/bytes в одном вызове; конкурентные случаи остаются открытыми. Input и полноценный GUI host отсутствуют. Installer, release binary и CI отсутствуют. `probes/mcp/Package.swift` собирает отдельный тестовый MCP stdio server. Предлагаемый стек — [архитектура](../architecture/README.md), текущее состояние — [TE-E02](../work/epics/TE-E02.md).
 
 ## Начало реализации
 
@@ -18,7 +18,7 @@ status: draft
 
 Для отдельной GUI-проверки ввода: `python3 probes/ghostty/keys_probe.py`. Требуются уже запущенный Ghostty, локально собранный `termex-host` и разрешённый macOS Automation. Probe создаёт и закрывает собственное окно, направляет события по ID только в нём, печатает hex введённых байтов и результаты действий split/tab; пользовательское содержимое других окон не читает. Это исследовательская проверка, а не MCP/IPC input.
 
-`swift run TermexRegistryCheck` проверяет in-memory модель выбора Ghostty на синтетических ID: одноразовый handle, инвалидирование и смену session ID. Он не запрашивает macOS Automation и не выдаёт согласие. При реальном `terminal_request_access` AppKit helper показывает окна/вкладки/splits, требует явного выбора, возвращает выбранный handle, scope и отдельную отметку clipboard export; host повторно разрешает точные IDs. Результат хранится до закрытия IPC connection. Без config opt-in и отдельной отметки экран закрыт; input остаётся закрыт.
+`swift run TermexRegistryCheck` проверяет in-memory модель выбора Ghostty на синтетических ID: одноразовый handle, инвалидирование и смену session ID. Он не запрашивает macOS Automation и не выдаёт согласие. При реальном `terminal_request_access` AppKit helper показывает окна/вкладки/splits, требует явного выбора, возвращает выбранный handle, read scope и отдельную отметку clipboard export; host повторно разрешает точные IDs. Результат хранится до закрытия IPC connection. Без config opt-in и отдельной отметки экран закрыт; input остаётся закрыт.
 
 Аналогично для Terminal.app: `.build/debug/termex-host --list-terminal`, `python3 Tests/integration/terminal_discovery.py`, `.build/debug/termex-host --resolve-terminal <app-instance-id> <window-id> <tty>`. Если Terminal.app не запущен, список пуст и приложение не запускается. TTY может переиспользоваться: `resolve` — локальная диагностика, не право на read/input и не устойчивый session binding.
 
