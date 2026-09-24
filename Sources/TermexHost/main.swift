@@ -144,11 +144,19 @@ let config = try LocalConfig.load(at: configURL, requireExisting: explicitConfig
                     grants.check(connection: connectionID, session: session, token: token,
                                  scope: .read, clipboardExport: true)
                 }
-            } catch GhosttyExportFile.Failure.tooLarge {
-                try LocalIPC.writeFrame(Data(#"{"error":"too_large"}"#.utf8), to: client)
-                return true
-            } catch GhosttyScreenExport.Failure.clipboardUnavailable {
-                try LocalIPC.writeFrame(Data(#"{"error":"clipboard_unavailable"}"#.utf8), to: client)
+            } catch {
+                let reason: String
+                switch error {
+                case GhosttyExportFile.Failure.tooLarge: reason = "too_large"
+                case GhosttyScreenExport.Failure.clipboardUnavailable: reason = "clipboard_unavailable"
+                default: throw error
+                }
+                guard grants.check(connection: connectionID, session: session, token: token,
+                                   scope: .read, clipboardExport: true),
+                      try consent.revalidate(session) == target else {
+                    throw LocalIPC.Failure.unauthorizedPeer
+                }
+                try LocalIPC.writeFrame(JSONSerialization.data(withJSONObject: ["error": reason]), to: client)
                 return true
             }
             guard grants.check(connection: connectionID, session: session, token: token,
