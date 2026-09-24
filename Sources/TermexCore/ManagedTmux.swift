@@ -27,7 +27,8 @@ public final class ManagedTmux: @unchecked Sendable {
     }
 
     public enum Failure: Error {
-        case unsafeRoot, tmuxUnavailable, socketCollision, staleSession, invalidPane, commandFailed
+        case unsafeRoot, tmuxUnavailable, socketCollision, staleSession, invalidPane, commandFailed,
+             launchIndeterminate
     }
 
     private struct Identity: Equatable {
@@ -48,7 +49,8 @@ public final class ManagedTmux: @unchecked Sendable {
     private var socketIdentity: Identity?
     private var bindings: [UUID: (generation: UInt64, binding: Binding, active: Bool)] = [:]
     private var gates: [UUID: (gate: CaptureGate, paths: [String], pipePID: Int32, limit: Int,
-                               directory: Identity, segment: Identity, launchAttempted: Bool)] = [:]
+                               directory: Identity, segment: Identity, launchAttempted: Bool,
+                               launchConfirmed: Bool)] = [:]
 
     public init(root: URL, tmuxExecutable: URL) throws {
         guard root.isFileURL, tmuxExecutable.isFileURL,
@@ -86,8 +88,16 @@ public final class ManagedTmux: @unchecked Sendable {
         try checkSocket(allowMissing: socketIdentity == nil)
         if socketIdentity != nil {
             // ponytail: require an existing live binding; a fresh namespace is needed after the last one closes.
-            guard let existing = bindings.values.first(where: { $0.active }) else { throw Failure.staleSession }
-            try verify(existing.binding)
+            var lastError: Error = Failure.staleSession
+            var verified = false
+            for (id, entry) in bindings where entry.active && !isLaunchIndeterminate(id) {
+                do {
+                    try verify(entry.binding, expectedPipePID: gates[id]?.pipePID)
+                    verified = true
+                    break
+                } catch { lastError = error }
+            }
+            guard verified else { throw lastError }
         }
         let name = "te-\(ref.id.uuidString.lowercased().replacingOccurrences(of: "-", with: ""))-g\(ref.generation)"
         let output: String
@@ -128,6 +138,7 @@ public final class ManagedTmux: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         let binding = try activeBinding(ref)
+        guard !isLaunchIndeterminate(ref.id) else { throw Failure.launchIndeterminate }
         try verify(binding, expectedPipePID: gates[ref.id]?.pipePID)
         return binding
     }
@@ -171,7 +182,8 @@ public final class ManagedTmux: @unchecked Sendable {
                         throw Failure.invalidPane
                     }
                     let gate = CaptureGate(id: UUID(), sessionID: ref.id, generation: ref.generation)
-                    gates[ref.id] = (gate, paths, pipePID, maxBytes, Identity(info), Identity(segmentInfo), false)
+                    gates[ref.id] = (gate, paths, pipePID, maxBytes, Identity(info), Identity(segmentInfo),
+                                     false, false)
                     return gate
                 }
                 usleep(20_000)
@@ -212,6 +224,7 @@ public final class ManagedTmux: @unchecked Sendable {
                               paneID: binding.paneID, panePID: details.2, socketPath: binding.socketPath)
         try verify(updated, expectedPipePID: state.pipePID)
         bindings[ref.id]?.binding = updated
+        gates[ref.id]?.launchConfirmed = true
         return updated
     }
 
@@ -221,6 +234,7 @@ public final class ManagedTmux: @unchecked Sendable {
         defer { lock.unlock() }
         let binding = try activeBinding(ref)
         guard let state = gates[ref.id], state.gate == gate else { throw Failure.staleSession }
+        guard !isLaunchIndeterminate(ref.id) else { throw Failure.launchIndeterminate }
         try verify(binding)
         let directory = URL(fileURLWithPath: state.paths[0]).deletingLastPathComponent().path
         guard let directoryInfo = Self.fileStat(directory),
@@ -250,7 +264,8 @@ public final class ManagedTmux: @unchecked Sendable {
         try checkRoot()
         try checkSocket(allowMissing: false)
         // Keep identity check and kill-session in one tmux server command queue.
-        let outcome = try run(["if-shell", "-t", binding.paneID, "-F", closeCondition(binding),
+        let outcome = try run(["if-shell", "-t", binding.paneID, "-F",
+                               closeCondition(binding, pipePID: gates[ref.id]?.pipePID),
                                "display-message -p termex_closed; kill-session -t =\(binding.sessionName)",
                                "display-message -p termex_stale_binding"])
         guard outcome == "termex_closed\n" else { throw Failure.invalidPane }
@@ -264,6 +279,11 @@ public final class ManagedTmux: @unchecked Sendable {
             throw Failure.staleSession
         }
         return entry.binding
+    }
+
+    private func isLaunchIndeterminate(_ id: UUID) -> Bool {
+        guard let state = gates[id] else { return false }
+        return state.launchAttempted && !state.launchConfirmed
     }
 
     private func verify(_ binding: Binding, expectedPipePID: Int32? = nil) throws {
@@ -369,8 +389,9 @@ public final class ManagedTmux: @unchecked Sendable {
         return (String(parts[0]), String(parts[1]), pid)
     }
 
-    private func closeCondition(_ binding: Binding) -> String {
-        "#{&&:#{==:#{session_name},\(binding.sessionName)},#{==:#{pane_pid},\(binding.panePID)}}"
+    private func closeCondition(_ binding: Binding, pipePID: Int32?) -> String {
+        let pipeMatch = pipePID.map { "#{==:#{pane_pipe_pid},\($0)}" } ?? "1"
+        return "#{&&:#{==:#{session_id},\(binding.sessionID)},#{&&:#{==:#{session_name},\(binding.sessionName)},#{&&:#{==:#{pane_pid},\(binding.panePID)},\(pipeMatch)}}}"
     }
 
     private func run(_ arguments: [String]) throws -> String {

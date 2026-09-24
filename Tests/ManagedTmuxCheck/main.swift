@@ -104,10 +104,10 @@ let survivorPID = try panePID(secondBinding)
 try require(survivor.paneID == secondBinding.paneID, "survivor pane ID")
 try require(survivorPID == secondPID, "survivor pane PID")
 
-func mutateFixture(_ arguments: [String]) throws {
+func mutateFixture(_ arguments: [String], socketPath: String = secondBinding.socketPath) throws {
     let process = Process()
     process.executableURL = executable
-    process.arguments = ["-S", secondBinding.socketPath] + arguments
+    process.arguments = ["-S", socketPath] + arguments
     process.standardOutput = FileHandle.nullDevice
     process.standardError = FileHandle.nullDevice
     try process.run()
@@ -177,6 +177,10 @@ do {
 } catch ManagedTmux.Failure.invalidPane {}
 let disconnected = try manager.captureObservation(workload, gate: workloadGate)
 try require(!disconnected.pipeConnected, "replaced capture pipe reported disconnected")
+do {
+    try manager.close(workload)
+    throw CheckFailure(name: "replaced capture pipe was closed through old gate")
+} catch ManagedTmux.Failure.invalidPane {}
 let neighborPID = try panePID(secondBinding)
 try require(neighborPID == secondPID, "neighbor PID after launch")
 try mutateFixture(["kill-session", "-t", workloadBinding.sessionID])
@@ -216,4 +220,107 @@ do {
 } catch ManagedTmux.Failure.commandFailed {}
 catch ManagedTmux.Failure.socketCollision {}
 
-print("private_namespace=PASS capture_gate=PASS synthetic_workload=PASS capture_observation=PASS guarded_launch=PASS no_arg_rejected=PASS pipe_replacement=PASS foreign_pipe=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS atomic_stale_close=PASS missing_tmux=PASS socket_collision=PASS")
+let failureRoot = URL(fileURLWithPath: "/tmp").appendingPathComponent("te-fail-\(UUID().uuidString)")
+try FileManager.default.createDirectory(at: failureRoot, withIntermediateDirectories: false,
+                                        attributes: [.posixPermissions: 0o700])
+defer { try? FileManager.default.removeItem(at: failureRoot) }
+let failureSocket = failureRoot.appendingPathComponent("socket").path
+defer {
+    let cleanup = Process()
+    cleanup.executableURL = executable
+    cleanup.arguments = ["-S", failureSocket, "kill-server"]
+    cleanup.standardOutput = FileHandle.nullDevice
+    cleanup.standardError = FileHandle.nullDevice
+    if (try? cleanup.run()) != nil { cleanup.waitUntilExit() }
+}
+func shellQuote(_ value: String) -> String {
+    "'\(value.replacingOccurrences(of: "'", with: "'\"'\"'"))'"
+}
+let failBefore = failureRoot.appendingPathComponent("fail-before")
+let wrapper = failureRoot.appendingPathComponent("tmux-wrapper")
+let realTmux = shellQuote(executable.resolvingSymlinksInPath().path)
+let wrapperSource = """
+    #!/bin/sh
+    case "$*" in
+      *"respawn-pane -k"*)
+        if [ -e \(shellQuote(failBefore.path)) ]; then exit 1; fi
+        \(realTmux) "$@" >/dev/null 2>&1
+        exit 1 ;;
+    esac
+    exec \(realTmux) "$@"
+    """
+try wrapperSource.write(to: wrapper, atomically: true, encoding: .utf8)
+try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: wrapper.path)
+let failureManager = try ManagedTmux(root: failureRoot, tmuxExecutable: wrapper)
+let failureRef = SessionRef(id: UUID(), generation: 1)
+let failurePeer = SessionRef(id: UUID(), generation: 1)
+let failureBinding = try failureManager.create(failureRef)
+let failurePeerBinding = try failureManager.create(failurePeer)
+let failureGate = try failureManager.armCapture(failureRef, sinkExecutable: sink, maxBytes: 64)
+do {
+    _ = try failureManager.launchCapturedProcess(failureRef, gate: failureGate,
+        executableURL: URL(fileURLWithPath: "/bin/sleep"), arguments: ["3600"])
+    throw CheckFailure(name: "lost launch acknowledgment was accepted")
+} catch ManagedTmux.Failure.commandFailed {}
+let changedAfterLostAck = try panePID(failureBinding)
+try require(changedAfterLostAck != String(failureBinding.panePID), "server launch changed PID")
+do {
+    _ = try failureManager.revalidate(failureRef)
+    throw CheckFailure(name: "unconfirmed launch was revalidated")
+} catch ManagedTmux.Failure.launchIndeterminate {}
+do {
+    _ = try failureManager.captureObservation(failureRef, gate: failureGate)
+    throw CheckFailure(name: "unconfirmed launch reported capture metadata")
+} catch ManagedTmux.Failure.launchIndeterminate {}
+do {
+    _ = try failureManager.launchCapturedProcess(failureRef, gate: failureGate,
+        executableURL: URL(fileURLWithPath: "/bin/sleep"), arguments: ["3600"])
+    throw CheckFailure(name: "unconfirmed launch was retried")
+} catch ManagedTmux.Failure.staleSession {}
+do {
+    try failureManager.close(failureRef)
+    throw CheckFailure(name: "stale close killed an unconfirmed launch")
+} catch ManagedTmux.Failure.invalidPane {}
+let survivedLostAck = try panePID(failureBinding)
+try require(survivedLostAck == changedAfterLostAck, "unconfirmed pane survived stale close")
+let peerAfterLostAck = try failureManager.revalidate(failurePeer)
+try require(peerAfterLostAck == failurePeerBinding, "peer survived lost acknowledgment")
+
+let staleAnchor = SessionRef(id: UUID(), generation: 1)
+let staleAnchorBinding = try failureManager.create(staleAnchor)
+_ = try failureManager.armCapture(staleAnchor, sinkExecutable: sink, maxBytes: 64)
+let staleAnchorPipePID = try panePID(staleAnchorBinding, format: "#{pane_pipe_pid}")
+try mutateFixture(["pipe-pane", "-O", "-t", staleAnchorBinding.paneID, "cat >/dev/null"],
+                  socketPath: failureSocket)
+var staleAnchorReplacement: String?
+for _ in 0..<100 {
+    staleAnchorReplacement = try? panePID(staleAnchorBinding, format: "#{pane_pipe_pid}")
+    if staleAnchorReplacement != nil && staleAnchorReplacement != staleAnchorPipePID { break }
+    usleep(20_000)
+}
+try require(staleAnchorReplacement != nil && staleAnchorReplacement != staleAnchorPipePID,
+            "stale anchor pipe replacement")
+do {
+    _ = try failureManager.revalidate(staleAnchor)
+    throw CheckFailure(name: "stale capture anchor was revalidated")
+} catch ManagedTmux.Failure.invalidPane {}
+let beforeRef = SessionRef(id: UUID(), generation: 1)
+let beforeBinding = try failureManager.create(beforeRef)
+let beforeGate = try failureManager.armCapture(beforeRef, sinkExecutable: sink, maxBytes: 64)
+try Data().write(to: failBefore)
+do {
+    _ = try failureManager.launchCapturedProcess(beforeRef, gate: beforeGate,
+        executableURL: URL(fileURLWithPath: "/bin/sleep"), arguments: ["3600"])
+    throw CheckFailure(name: "pre-dispatch launch failure was accepted")
+} catch ManagedTmux.Failure.commandFailed {}
+let beforePID = try panePID(beforeBinding)
+try require(beforePID == String(beforeBinding.panePID), "pre-dispatch failure changed placeholder")
+do {
+    _ = try failureManager.revalidate(beforeRef)
+    throw CheckFailure(name: "unconfirmed placeholder was revalidated")
+} catch ManagedTmux.Failure.launchIndeterminate {}
+try failureManager.close(beforeRef)
+let peerAfterPlaceholderClose = try failureManager.revalidate(failurePeer)
+try require(peerAfterPlaceholderClose == failurePeerBinding, "peer survived exact placeholder close")
+
+print("private_namespace=PASS capture_gate=PASS synthetic_workload=PASS capture_observation=PASS guarded_launch=PASS no_arg_rejected=PASS pipe_replacement=PASS foreign_pipe=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS atomic_stale_close=PASS lost_ack_quarantine=PASS pre_dispatch_quarantine=PASS healthy_anchor=PASS missing_tmux=PASS socket_collision=PASS")
