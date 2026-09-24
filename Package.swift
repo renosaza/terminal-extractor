@@ -18,6 +18,7 @@ let package = Package(
         .executableTarget(name: "TermexHost", dependencies: ["TermexCore"]),
         .executableTarget(name: "TermexConsent"),
         .executableTarget(name: "TermexCaptureSink"),
+        .executableTarget(name: "TermexCaptureSinkCheck", path: "Tests/CaptureSinkCheck"),
         .executableTarget(name: "TermexMCP", dependencies: [
             "TermexCore", .product(name: "MCP", package: "swift-sdk"),
         ]),
