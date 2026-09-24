@@ -89,6 +89,13 @@ def gateway(path, preferences=None, request_access=False):
                 "session_id": "11111111-1111-4111-8111-111111111111", "generation": 1}}}) + "\n")
         process.stdin.flush()
         assert json.loads(process.stdout.readline())["result"]["isError"] is True
+        for view in ["scrollback", "invalid", True]:
+            process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {
+                "name": "terminal_screen", "arguments": {
+                    "session_id": "11111111-1111-4111-8111-111111111111", "generation": 1,
+                    "view": view}}}) + "\n")
+            process.stdin.flush()
+            assert json.loads(process.stdout.readline())["result"]["isError"] is True
         target = {"session_id": "11111111-1111-4111-8111-111111111111", "generation": 1, "request_id": "release-1"}
         invalid_releases = [
             {}, {**target, "session_id": "invalid"}, {**target, "generation": 0},
@@ -163,6 +170,11 @@ with tempfile.TemporaryDirectory(prefix="termex-ipc-") as temporary:
         assert exchange(path, b'{"op":"ping"}') == {"ok": True}
         assert exchange(path, b'{"op":"access_status"}') == {"sessions": []}
         assert exchange(path, b'{"op":"read_ghostty_screen","session_id":"11111111-1111-4111-8111-111111111111","generation":1,"grant_token":"22222222-2222-4222-8222-222222222222"}') == {"ok": False}
+        for invalid_view in [None, True, "invalid"]:
+            payload = json.dumps({"op": "read_ghostty_screen", "session_id": "11111111-1111-4111-8111-111111111111",
+                                  "generation": 1, "grant_token": "22222222-2222-4222-8222-222222222222",
+                                  "view": invalid_view}).encode()
+            assert exchange(path, payload) == {"ok": False}
         for invalid_generation in [True, 1.0, 1.5]:
             payload = json.dumps({"op": "release_session", "session_id": "11111111-1111-4111-8111-111111111111",
                                   "generation": invalid_generation, "grant_token": "22222222-2222-4222-8222-222222222222"}).encode()

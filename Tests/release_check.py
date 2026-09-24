@@ -9,6 +9,7 @@ with tempfile.TemporaryDirectory(prefix="termex-release-check-") as directory:
     binary = Path(directory) / "check"
     subprocess.run([
         "swiftc", "-emit-library", "-emit-module", "-module-name", "TermexCore",
+        "-package-name", "terminal-extractor",
         *(str(path) for path in sorted((root / "Sources/TermexCore").glob("*.swift"))),
         "-emit-module-path", str(Path(directory) / "TermexCore.swiftmodule"),
         "-o", str(Path(directory) / "libTermexCore.dylib"),
@@ -39,7 +40,7 @@ with tempfile.TemporaryDirectory(prefix="termex-release-mcp-") as directory:
     listener.listen(1)
     session_id = str(uuid.uuid4()).upper()
     tokens = [str(uuid.uuid4()).upper(), str(uuid.uuid4()).upper()]
-    releases, failures = [], []
+    releases, reads, failures = [], [], []
 
     def exact(connection, count):
         data = b""
@@ -64,8 +65,15 @@ with tempfile.TemporaryDirectory(prefix="termex-release-mcp-") as directory:
                     elif operation == "request_ghostty_access":
                         reply = {"status": "approved", "session_id": session_id, "generation": 1,
                                  "scope": "read", "grant_token": tokens[approvals],
-                                 "clipboard_export": False, "terminal_access": False}
+                                 "clipboard_export": True, "terminal_access": True}
                         approvals += 1
+                    elif operation == "read_ghostty_screen":
+                        assert request["session_id"] == session_id and request["generation"] == 1
+                        assert request["grant_token"] == tokens[approvals - 1]
+                        reads.append(request["view"])
+                        reply = {"text": "synthetic", "observed_at": "2026-09-24T00:00:00Z",
+                                 "source": "ghostty_screen_snapshot" if request["view"] == "screen" else "ghostty_scrollback_snapshot",
+                                 "history_complete": False}
                     elif operation == "release_session":
                         assert request["session_id"] == session_id and request["generation"] == 1
                         releases.append(request["grant_token"])
@@ -101,6 +109,12 @@ with tempfile.TemporaryDirectory(prefix="termex-release-mcp-") as directory:
                            "clientInfo": {"name": "release-check", "version": "0"}})
         process.stdin.write('{"jsonrpc":"2.0","method":"notifications/initialized"}\n')
         assert call("terminal_request_access", {})["structuredContent"]["status"] == "approved"
+        target = {"session_id": session_id, "generation": 1}
+        assert call("terminal_screen", target)["structuredContent"]["source"] == "ghostty_screen_snapshot"
+        assert call("terminal_screen", {**target, "view": "scrollback"})["structuredContent"]["source"] == "ghostty_scrollback_snapshot"
+        assert call("terminal_screen", {**target, "view": "invalid"})["isError"]
+        assert call("terminal_screen", {**target, "other": True})["isError"]
+        assert reads == ["screen", "scrollback"]
         arguments = {"session_id": session_id, "generation": 1, "request_id": "first"}
         first = call("terminal_release", arguments)
         assert first["structuredContent"] == {**arguments, "status": "released"}
@@ -123,4 +137,4 @@ with tempfile.TemporaryDirectory(prefix="termex-release-mcp-") as directory:
             process.kill()
             process.wait()
         listener.close()
-print("MCP release success and replay after synthetic renewed consent: PASS")
+print("MCP release replay and screen/scrollback routing with synthetic host: PASS")

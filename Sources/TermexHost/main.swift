@@ -118,11 +118,16 @@ let config = try LocalConfig.load(at: configURL, requireExisting: explicitConfig
                                           session: SessionRef(id: id, generation: UInt64(generation)), token: token)
             try LocalIPC.writeFrame(JSONSerialization.data(withJSONObject: ["released": released]), to: client)
         case "read_ghostty_screen":
-            guard request.count == 4,
+            guard request.count == 4 || request.count == 5,
                   let idText = request["session_id"] as? String, let id = UUID(uuidString: idText),
+                  let number = request["generation"] as? NSNumber,
+                  CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  !["f", "d"].contains(String(cString: number.objCType)),
                   let generation = request["generation"] as? Int, generation > 0,
                   let tokenText = request["grant_token"] as? String,
-                  let token = UUID(uuidString: tokenText) else { throw LocalIPC.Failure.invalidFrame }
+                  let token = UUID(uuidString: tokenText),
+                  let viewText = request.count == 4 ? "screen" : request["view"] as? String,
+                  let view = GhosttyScreenExport.View(rawValue: viewText) else { throw LocalIPC.Failure.invalidFrame }
             let session = SessionRef(id: id, generation: UInt64(generation))
             guard let gateway = Bundle.main.executableURL?.deletingLastPathComponent()
                 .appendingPathComponent("termex-mcp").path else { throw LocalIPC.Failure.unauthorizedPeer }
@@ -133,7 +138,7 @@ let config = try LocalConfig.load(at: configURL, requireExisting: explicitConfig
                 throw LocalIPC.Failure.unauthorizedPeer
             }
             let target = try consent.revalidate(session)
-            let snapshot = try GhosttyScreenExport.read(target) {
+            let snapshot = try GhosttyScreenExport.read(target, view: view) {
                 grants.check(connection: connectionID, session: session, token: token,
                              scope: .read, clipboardExport: true)
             }
@@ -144,7 +149,8 @@ let config = try LocalConfig.load(at: configURL, requireExisting: explicitConfig
             }
             let response = try JSONSerialization.data(withJSONObject: [
                 "text": snapshot.text, "observed_at": ISO8601DateFormatter().string(from: snapshot.observedAt),
-                "source": "ghostty_screen_snapshot", "history_complete": false,
+                "source": view == .screen ? "ghostty_screen_snapshot" : "ghostty_scrollback_snapshot",
+                "history_complete": false,
             ])
             try LocalIPC.writeFrame(response, to: client)
         default:

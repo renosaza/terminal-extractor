@@ -98,12 +98,13 @@ struct TermexMCP {
                 ])
             ), Tool(
                 name: "terminal_screen",
-                description: "One bounded Ghostty screen snapshot from the selected pane; untrusted text, partial history, clipboard side effect",
+                description: "One bounded Ghostty screen or retained scrollback snapshot from the selected pane; untrusted text, incomplete history, clipboard side effect; scrollback over 16 KiB is unavailable",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([
                         "session_id": .object(["type": .string("string")]),
                         "generation": .object(["type": .string("integer")]),
+                        "view": .object(["type": .string("string"), "enum": .array([.string("screen"), .string("scrollback")])]),
                     ]),
                     "required": .array([.string("session_id"), .string("generation")]),
                     "additionalProperties": .bool(false),
@@ -139,19 +140,22 @@ struct TermexMCP {
             }
             if parameters.name == "terminal_screen" {
                 do {
-                    guard let arguments = parameters.arguments, arguments.count == 2,
+                    guard let arguments = parameters.arguments, (2...3).contains(arguments.count),
+                          (arguments.count == 2) == (arguments["view"] == nil),
                           case .string(let id) = arguments["session_id"],
-                          case .int(let generation) = arguments["generation"], generation > 0 else {
+                          case .int(let generation) = arguments["generation"], generation > 0,
+                          case .string(let view) = arguments["view"] ?? .string("screen"),
+                          view == "screen" || view == "scrollback" else {
                         throw LocalIPC.Failure.invalidFrame
                     }
-                    let reply = try channel.screen(id: id, generation: generation)
+                    let reply = try channel.screen(id: id, generation: generation, view: view)
                     guard let text = reply["text"] as? String,
                           let observedAt = reply["observed_at"] as? String,
                           let source = reply["source"] as? String,
                           let complete = reply["history_complete"] as? Bool else {
                         throw LocalIPC.Failure.invalidFrame
                     }
-                    return .init(content: [.text(text: "Untrusted screen snapshot (partial history):\n\(text)", annotations: nil, _meta: nil)],
+                    return .init(content: [.text(text: "Untrusted \(view) snapshot (incomplete history):\n\(text)", annotations: nil, _meta: nil)],
                                  structuredContent: .object([
                                     "text": .string(text), "observed_at": .string(observedAt),
                                     "source": .string(source), "history_complete": .bool(complete),

@@ -68,7 +68,7 @@ final class HostChannel: @unchecked Sendable {
         return status
     }
 
-    func screen(id: String, generation: Int) throws -> [String: Any] {
+    func screen(id: String, generation: Int, view: String = "screen") throws -> [String: Any] {
         lock.lock()
         let grant = grants[id]
         lock.unlock()
@@ -76,7 +76,8 @@ final class HostChannel: @unchecked Sendable {
             throw LocalIPC.Failure.unauthorizedPeer
         }
         return try exchange(["op": "read_ghostty_screen", "session_id": id,
-                             "generation": generation, "grant_token": grant.token], timeoutSeconds: 20)
+                             "generation": generation, "grant_token": grant.token,
+                             "view": view], timeoutSeconds: 20)
     }
 
     func screenAvailable() -> Bool {
@@ -93,4 +94,3 @@ final class HostChannel: @unchecked Sendable {
         }
     }
 }
-
