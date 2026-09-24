@@ -254,7 +254,8 @@ public final class ManagedTmux: @unchecked Sendable {
         return CaptureObservation(gate: gate, observedBytes: UInt64(info.st_size),
                                   gapObserved: try Self.markerObserved(state.paths[2]),
                                   sinkClosedCleanly: try Self.markerObserved(state.paths[3]),
-                                  pipeConnected: pipeOutput == "\(state.pipePID)\n")
+                                  pipeConnected: pipeOutput == "\(state.pipePID)\n" &&
+                                                 kill(state.pipePID, 0) == 0)
     }
 
     public func close(_ ref: SessionRef) throws {
@@ -298,6 +299,8 @@ public final class ManagedTmux: @unchecked Sendable {
         guard output == expected else {
             throw Failure.invalidPane
         }
+        // tmux can retain pane_pipe_pid after its sink process has exited.
+        if let expectedPipePID, kill(expectedPipePID, 0) != 0 { throw Failure.invalidPane }
         try checkSocket(allowMissing: false)
     }
 

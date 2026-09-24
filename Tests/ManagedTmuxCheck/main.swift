@@ -192,7 +192,13 @@ try mutateFixture(["kill-session", "-t", workloadBinding.sessionID])
 
 let shellRef = SessionRef(id: UUID(), generation: 1)
 let shellPlaceholder = try manager.create(shellRef)
+let captureDirsBeforeShell = Set(try FileManager.default.contentsOfDirectory(atPath: root.path)
+    .filter { $0.hasPrefix("capture-") })
 let shellGate = try manager.armCapture(shellRef, sinkExecutable: sink, maxBytes: 4096)
+let shellCaptureDirs = Set(try FileManager.default.contentsOfDirectory(atPath: root.path)
+    .filter { $0.hasPrefix("capture-") }).subtracting(captureDirsBeforeShell)
+try require(shellCaptureDirs.count == 1, "private shell capture directory")
+let shellCaptureDir = root.appendingPathComponent(shellCaptureDirs.first!)
 let shellBinding = try manager.launchCapturedProcess(shellRef, gate: shellGate,
     executableURL: URL(fileURLWithPath: "/bin/zsh"), arguments: ["-f", "-i"])
 try require(shellBinding.panePID != shellPlaceholder.panePID, "private shell launch PID")
@@ -226,6 +232,26 @@ let shellVerified = try manager.revalidate(shellRef)
 try require(shellVerified == shellBinding, "private shell binding after commands")
 let neighborAfterShell = try panePID(secondBinding)
 try require(neighborAfterShell == secondPID, "neighbor PID after private shell")
+do {
+    try FileManager.default.setAttributes([.posixPermissions: 0o500],
+                                          ofItemAtPath: shellCaptureDir.path)
+    defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700],
+                                                    ofItemAtPath: shellCaptureDir.path) }
+    try mutateFixture(["send-keys", "-l", "-t", shellBinding.paneID, "printf '%05000d' 0"])
+    try mutateFixture(["send-keys", "-t", shellBinding.paneID, "Enter"])
+    var failedMarker = try manager.captureObservation(shellRef, gate: shellGate)
+    for _ in 0..<150 where failedMarker.pipeConnected {
+        usleep(20_000)
+        failedMarker = try manager.captureObservation(shellRef, gate: shellGate)
+    }
+    try require(failedMarker.observedBytes == 4096 && !failedMarker.gapObserved &&
+                !failedMarker.sinkClosedCleanly && !failedMarker.pipeConnected,
+                "owner reports failed gap marker as disconnected pipe")
+}
+do {
+    _ = try manager.revalidate(shellRef)
+    throw CheckFailure(name: "dead capture sink retained valid binding")
+} catch ManagedTmux.Failure.invalidPane {}
 try mutateFixture(["send-keys", "-l", "-t", shellBinding.paneID, "exit"])
 try mutateFixture(["send-keys", "-t", shellBinding.paneID, "Enter"])
 var shellPaneGone = false
@@ -393,4 +419,4 @@ try failureManager.close(beforeRef)
 let peerAfterPlaceholderClose = try failureManager.revalidate(failurePeer)
 try require(peerAfterPlaceholderClose == failurePeerBinding, "peer survived exact placeholder close")
 
-print("private_namespace=PASS capture_gate=PASS synthetic_workload=PASS capture_observation=PASS owner_quota_gap=PASS guarded_launch=PASS private_shell_state=PASS private_shell_exit=PASS no_arg_rejected=PASS pipe_replacement=PASS foreign_pipe=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS atomic_stale_close=PASS lost_ack_quarantine=PASS pre_dispatch_quarantine=PASS healthy_anchor=PASS missing_tmux=PASS socket_collision=PASS")
+print("private_namespace=PASS capture_gate=PASS synthetic_workload=PASS capture_observation=PASS owner_quota_gap=PASS dead_sink_detection=PASS guarded_launch=PASS private_shell_state=PASS private_shell_exit=PASS no_arg_rejected=PASS pipe_replacement=PASS foreign_pipe=PASS exact_binding=PASS stale_generation=PASS isolated_close=PASS pane_replacement=PASS stale_binding=PASS atomic_stale_close=PASS lost_ack_quarantine=PASS pre_dispatch_quarantine=PASS healthy_anchor=PASS missing_tmux=PASS socket_collision=PASS")
