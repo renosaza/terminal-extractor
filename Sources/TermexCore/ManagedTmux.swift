@@ -48,6 +48,12 @@ public final class ManagedTmux: @unchecked Sendable {
         }
     }
 
+    private struct ProcessIdentity: Equatable {
+        let pid: Int32
+        let startedSeconds: UInt64
+        let startedMicroseconds: UInt64
+    }
+
     private let lock = NSLock()
     private let root: String
     private let rootIdentity: Identity
@@ -56,7 +62,7 @@ public final class ManagedTmux: @unchecked Sendable {
     private let socket: String
     private var socketIdentity: Identity?
     private var bindings: [UUID: (generation: UInt64, binding: Binding, active: Bool)] = [:]
-    private var gates: [UUID: (gate: CaptureGate, paths: [String], pipePID: Int32, limit: Int,
+    private var gates: [UUID: (gate: CaptureGate, paths: [String], pipe: ProcessIdentity, limit: Int,
                                directory: Identity, segment: Identity, launchAttempted: Bool,
                                launchConfirmed: Bool)] = [:]
 
@@ -100,7 +106,7 @@ public final class ManagedTmux: @unchecked Sendable {
             var verified = false
             for (id, entry) in bindings where entry.active && !isLaunchIndeterminate(id) {
                 do {
-                    try verify(entry.binding, expectedPipePID: gates[id]?.pipePID)
+                    try verify(entry.binding, expectedPipe: gates[id]?.pipe)
                     verified = true
                     break
                 } catch { lastError = error }
@@ -147,7 +153,7 @@ public final class ManagedTmux: @unchecked Sendable {
         defer { lock.unlock() }
         let binding = try activeBinding(ref)
         guard !isLaunchIndeterminate(ref.id) else { throw Failure.launchIndeterminate }
-        try verify(binding, expectedPipePID: gates[ref.id]?.pipePID)
+        try verify(binding, expectedPipe: gates[ref.id]?.pipe)
         return binding
     }
 
@@ -157,8 +163,8 @@ public final class ManagedTmux: @unchecked Sendable {
         defer { lock.unlock() }
         let binding = try activeBinding(ref)
         guard !isLaunchIndeterminate(ref.id) else { throw Failure.launchIndeterminate }
-        let pipePID = gates[ref.id]?.pipePID
-        try verify(binding, expectedPipePID: pipePID)
+        let pipe = gates[ref.id]?.pipe
+        try verify(binding, expectedPipe: pipe)
         let format = "#{session_id}\t#{pane_id}\t#{pane_pid}\t#{pane_width}\t#{pane_height}\t#{cursor_x}\t#{cursor_y}\t#{alternate_on}"
         let output = try run(["display-message", "-p", "-t", binding.paneID, format])
         let fields = output.trimmingCharacters(in: .newlines)
@@ -169,7 +175,7 @@ public final class ManagedTmux: @unchecked Sendable {
               let cursorX = Int(fields[5]), cursorX >= 0,
               let cursorY = Int(fields[6]), cursorY >= 0,
               fields[7] == "0" || fields[7] == "1" else { throw Failure.invalidPane }
-        try verify(binding, expectedPipePID: pipePID)
+        try verify(binding, expectedPipe: pipe)
         return ScreenMetadata(columns: columns, rows: rows, cursorX: cursorX, cursorY: cursorY,
                               alternateScreen: fields[7] == "1")
     }
@@ -199,21 +205,24 @@ public final class ManagedTmux: @unchecked Sendable {
             guard outcome.isEmpty else { throw Failure.invalidPane }
             let deadline = DispatchTime.now().uptimeNanoseconds + 5_000_000_000
             while DispatchTime.now().uptimeNanoseconds < deadline {
-                if let readyPID = Self.privateMarkerPID(paths[1]),
+                if let readyPipe = Self.privateMarkerIdentity(paths[1]),
                    try run(["display-message", "-p", "-t", binding.paneID, "#{pane_pipe}"]) == "1\n" {
                     try verify(binding)
                     let pipeOutput = try run(["display-message", "-p", "-t", binding.paneID,
                                               "#{pane_pipe_pid}"])
                     guard let pipePID = Int32(pipeOutput.trimmingCharacters(in: .whitespacesAndNewlines)),
                           pipePID > 0 else { throw Failure.invalidPane }
-                    if pipePID != readyPID { usleep(20_000); continue }
+                    if pipePID != readyPipe.pid || Self.processIdentity(pipePID) != readyPipe {
+                        usleep(20_000)
+                        continue
+                    }
                     guard let segmentInfo = Self.fileStat(paths[0]),
                           segmentInfo.st_mode & S_IFMT == S_IFREG,
                           segmentInfo.st_uid == getuid(), segmentInfo.st_mode & 0o077 == 0 else {
                         throw Failure.invalidPane
                     }
                     let gate = CaptureGate(id: UUID(), sessionID: ref.id, generation: ref.generation)
-                    gates[ref.id] = (gate, paths, pipePID, maxBytes, Identity(info), Identity(segmentInfo),
+                    gates[ref.id] = (gate, paths, readyPipe, maxBytes, Identity(info), Identity(segmentInfo),
                                      false, false)
                     return gate
                 }
@@ -233,7 +242,7 @@ public final class ManagedTmux: @unchecked Sendable {
         guard var state = gates[ref.id], state.gate == gate, !state.launchAttempted else {
             throw Failure.staleSession
         }
-        try verify(binding, expectedPipePID: state.pipePID)
+        try verify(binding, expectedPipe: state.pipe)
         let program = try checkedExecutable(executableURL)
         // With no argument tmux executes a shell-command via /bin/sh instead of direct exec.
         guard !arguments.isEmpty,
@@ -243,7 +252,7 @@ public final class ManagedTmux: @unchecked Sendable {
         state.launchAttempted = true
         gates[ref.id] = state
         let command = ([program] + arguments).map(Self.shellQuote).joined(separator: " ")
-        let condition = "#{&&:#{==:#{session_id},\(binding.sessionID)},#{&&:#{==:#{session_name},\(binding.sessionName)},#{&&:#{==:#{pane_pid},\(binding.panePID)},#{==:#{pane_pipe_pid},\(state.pipePID)}}}}"
+        let condition = "#{&&:#{==:#{session_id},\(binding.sessionID)},#{&&:#{==:#{session_name},\(binding.sessionName)},#{&&:#{==:#{pane_pid},\(binding.panePID)},#{==:#{pane_pipe_pid},\(state.pipe.pid)}}}}"
         let start = "respawn-pane -k -t \(binding.paneID) \(command); display-message -p -t \(binding.paneID) '#{session_id}\t#{pane_id}\t#{pane_pid}'"
         let output = try run(["if-shell", "-t", binding.paneID, "-F", condition,
                               start, "display-message -p termex_stale_binding"])
@@ -253,7 +262,7 @@ public final class ManagedTmux: @unchecked Sendable {
         }
         let updated = Binding(sessionName: binding.sessionName, sessionID: binding.sessionID,
                               paneID: binding.paneID, panePID: details.2, socketPath: binding.socketPath)
-        try verify(updated, expectedPipePID: state.pipePID)
+        try verify(updated, expectedPipe: state.pipe)
         bindings[ref.id]?.binding = updated
         gates[ref.id]?.launchConfirmed = true
         return updated
@@ -285,8 +294,8 @@ public final class ManagedTmux: @unchecked Sendable {
         return CaptureObservation(gate: gate, observedBytes: UInt64(info.st_size),
                                   gapObserved: try Self.markerObserved(state.paths[2]),
                                   sinkClosedCleanly: try Self.markerObserved(state.paths[3]),
-                                  pipeConnected: pipeOutput == "\(state.pipePID)\n" &&
-                                                 kill(state.pipePID, 0) == 0)
+                                  pipeConnected: pipeOutput == "\(state.pipe.pid)\n" &&
+                                                 Self.processIdentity(state.pipe.pid) == state.pipe)
     }
 
     public func close(_ ref: SessionRef) throws {
@@ -295,9 +304,12 @@ public final class ManagedTmux: @unchecked Sendable {
         let binding = try activeBinding(ref)
         try checkRoot()
         try checkSocket(allowMissing: false)
+        if let pipe = gates[ref.id]?.pipe, Self.processIdentity(pipe.pid) != pipe {
+            throw Failure.invalidPane
+        }
         // Keep identity check and kill-session in one tmux server command queue.
         let outcome = try run(["if-shell", "-t", binding.paneID, "-F",
-                               closeCondition(binding, pipePID: gates[ref.id]?.pipePID),
+                               closeCondition(binding, pipePID: gates[ref.id]?.pipe.pid),
                                "display-message -p termex_closed; kill-session -t =\(binding.sessionName)",
                                "display-message -p termex_stale_binding"])
         guard outcome == "termex_closed\n" else { throw Failure.invalidPane }
@@ -318,20 +330,22 @@ public final class ManagedTmux: @unchecked Sendable {
         return state.launchAttempted && !state.launchConfirmed
     }
 
-    private func verify(_ binding: Binding, expectedPipePID: Int32? = nil) throws {
+    private func verify(_ binding: Binding, expectedPipe: ProcessIdentity? = nil) throws {
         try checkRoot()
         try checkSocket(allowMissing: false)
         let format = "#{session_id}\t#{pane_id}\t#{pane_pid}\t#{pane_dead}" +
-            (expectedPipePID == nil ? "" : "\t#{pane_pipe_pid}")
+            (expectedPipe == nil ? "" : "\t#{pane_pipe_pid}")
         let output = try run(["list-panes", "-t", "=\(binding.sessionName)",
                               "-F", format])
         let expected = "\(binding.sessionID)\t\(binding.paneID)\t\(binding.panePID)\t0" +
-            (expectedPipePID.map { "\t\($0)" } ?? "") + "\n"
+            (expectedPipe.map { "\t\($0.pid)" } ?? "") + "\n"
         guard output == expected else {
             throw Failure.invalidPane
         }
-        // tmux can retain pane_pipe_pid after its sink process has exited.
-        if let expectedPipePID, kill(expectedPipePID, 0) != 0 { throw Failure.invalidPane }
+        // tmux can retain pane_pipe_pid after exit; start identity also rejects PID reuse.
+        if let expectedPipe, Self.processIdentity(expectedPipe.pid) != expectedPipe {
+            throw Failure.invalidPane
+        }
         try checkSocket(allowMissing: false)
     }
 
@@ -381,18 +395,35 @@ public final class ManagedTmux: @unchecked Sendable {
         return path
     }
 
-    private static func privateMarkerPID(_ path: String) -> Int32? {
+    private static func processIdentity(_ pid: Int32) -> ProcessIdentity? {
+        var value = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard pid > 0, proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &value, size) == size,
+              value.pbi_pid == UInt32(pid), value.pbi_uid == getuid(),
+              value.pbi_status != UInt32(SZOMB), value.pbi_start_tvsec > 0,
+              value.pbi_start_tvusec < 1_000_000 else { return nil }
+        return ProcessIdentity(pid: pid, startedSeconds: value.pbi_start_tvsec,
+                               startedMicroseconds: value.pbi_start_tvusec)
+    }
+
+    private static func privateMarkerIdentity(_ path: String) -> ProcessIdentity? {
         let fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
         guard fd >= 0 else { return nil }
         defer { _ = Darwin.close(fd) }
         var info = stat()
         guard fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
-              info.st_uid == getuid(), info.st_mode & 0o077 == 0 else { return nil }
-        var bytes = [UInt8](repeating: 0, count: 32)
+              info.st_uid == getuid(), info.st_mode & 0o077 == 0,
+              info.st_size > 0, info.st_size < 80 else { return nil }
+        var bytes = [UInt8](repeating: 0, count: 80)
         let count = read(fd, &bytes, bytes.count)
-        guard count > 0, count < bytes.count,
-              let pid = Int32(String(decoding: bytes.prefix(count), as: UTF8.self)), pid > 0 else { return nil }
-        return pid
+        guard count == info.st_size,
+              let text = String(bytes: bytes.prefix(count), encoding: .utf8) else { return nil }
+        let fields = text.split(separator: " ", omittingEmptySubsequences: false)
+        guard fields.count == 3, let pid = Int32(fields[0]), pid > 0,
+              let seconds = UInt64(fields[1]), seconds > 0,
+              let microseconds = UInt64(fields[2]), microseconds < 1_000_000 else { return nil }
+        return ProcessIdentity(pid: pid, startedSeconds: seconds,
+                               startedMicroseconds: microseconds)
     }
 
     private static func markerObserved(_ path: String) throws -> Bool {

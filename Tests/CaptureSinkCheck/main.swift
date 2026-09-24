@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 struct CheckFailure: Error { let name: String }
 func require(_ condition: @autoclosure () -> Bool, _ name: String) throws {
@@ -33,11 +34,27 @@ func fixture(_ input: Data, limit: Int, gap: Bool, denyGap: Bool = false) throws
     defer {
         if process.isRunning { process.terminate(); process.waitUntilExit() }
     }
-    if denyGap {
-        for _ in 0..<100 where !FileManager.default.fileExists(atPath: paths[1].path) {
-            Thread.sleep(forTimeInterval: 0.02)
+    var readyFields: [Substring] = []
+    for _ in 0..<100 {
+        if let marker = try? String(contentsOf: paths[1], encoding: .utf8) {
+            let fields = marker.split(separator: " ", omittingEmptySubsequences: false)
+            if fields.count == 3 { readyFields = fields; break }
         }
-        try require(FileManager.default.fileExists(atPath: paths[1].path), "ready before denied gap")
+        Thread.sleep(forTimeInterval: 0.02)
+    }
+    try require(readyFields.count == 3, "ready process identity before input")
+    guard let readyPID = Int32(readyFields[0]), let readySeconds = UInt64(readyFields[1]),
+          let readyMicroseconds = UInt64(readyFields[2]) else {
+        throw CheckFailure(name: "numeric ready process identity")
+    }
+    var processInfo = proc_bsdinfo()
+    let processInfoSize = Int32(MemoryLayout<proc_bsdinfo>.size)
+    try require(proc_pidinfo(readyPID, PROC_PIDTBSDINFO, 0, &processInfo, processInfoSize) == processInfoSize &&
+                processInfo.pbi_pid == UInt32(readyPID) &&
+                processInfo.pbi_start_tvsec == readySeconds &&
+                processInfo.pbi_start_tvusec == readyMicroseconds,
+                "ready marker matches live sink")
+    if denyGap {
         try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: directory.path)
     }
     stdin.fileHandleForWriting.write(input)
@@ -45,8 +62,7 @@ func fixture(_ input: Data, limit: Int, gap: Bool, denyGap: Bool = false) throws
     process.waitUntilExit()
     try require(process.terminationStatus == (denyGap ? 1 : 0), "sink exit after gap marker failure")
     try require(FileManager.default.fileExists(atPath: paths[1].path), "ready marker")
-    let readyPID = try String(contentsOf: paths[1], encoding: .utf8)
-    try require(Int32(readyPID) != nil, "ready sink PID")
+    try require(readySeconds > 0 && readyMicroseconds < 1_000_000, "valid ready start time")
     let segment = try Data(contentsOf: paths[0])
     try require(segment == input.prefix(limit), "exact segment bytes")
     try require(FileManager.default.fileExists(atPath: paths[2].path) == (gap && !denyGap), "gap marker")

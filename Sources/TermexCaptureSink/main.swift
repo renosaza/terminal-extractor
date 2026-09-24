@@ -8,6 +8,16 @@ func info(_ path: String) -> stat? {
     return lstat(path, &value) == 0 ? value : nil
 }
 
+func processIdentity() throws -> String {
+    var value = proc_bsdinfo()
+    let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+    let pid = getpid()
+    guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &value, size) == size,
+          value.pbi_pid == UInt32(pid), value.pbi_start_tvsec > 0,
+          value.pbi_start_tvusec < 1_000_000 else { throw SinkFailure.createFailed }
+    return "\(pid) \(value.pbi_start_tvsec) \(value.pbi_start_tvusec)"
+}
+
 func create(_ path: String, contents: String = "") throws {
     let fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
     guard fd >= 0 else { throw SinkFailure.createFailed }
@@ -41,7 +51,7 @@ func sink(paths: [String], limit: Int) throws {
     guard fd >= 0 else { throw SinkFailure.createFailed }
     var closed = false
     defer { if !closed { _ = close(fd) } }
-    try create(paths[1], contents: String(getpid()))
+    try create(paths[1], contents: processIdentity())
     var written = 0
     var lost = false
     var gapAttempted = false
