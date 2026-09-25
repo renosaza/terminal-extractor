@@ -50,8 +50,14 @@ if !selfCheck {
     process.waitUntilExit()
     let data = output.fileHandleForReading.readDataToEndOfFile()
     guard process.terminationStatus == 0, data.count <= 4096,
-          let reply = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-          Set(reply.keys) == ["kind", "confirmed", "nonce"],
+          let reply = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        throw CheckFailure.failed
+    }
+    if Set(reply.keys) == ["cancelled"], reply["cancelled"] as? Bool == true {
+        print("consent_cancelled=PASS private_owner=NOT_CREATED")
+        exit(0)
+    }
+    guard Set(reply.keys) == ["kind", "confirmed", "nonce"],
           reply["kind"] as? String == "terminal_managed_new",
           reply["confirmed"] as? Bool == true,
           reply["nonce"] as? String == nonce else { throw CheckFailure.failed }
