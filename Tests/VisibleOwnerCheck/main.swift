@@ -43,7 +43,10 @@ let binding = try manager.launchCapturedProcess(ref, gate: gate,
 let screen = try manager.screenMetadata(ref)
 guard screen.columns > 0 && screen.rows > 0 else { throw CheckFailure.failed }
 
+var viewClientObserved = false
 if !selfCheck {
+    guard let tty = ttyname(STDIN_FILENO) else { throw CheckFailure.failed }
+    let expectedTTY = String(cString: tty)
     print("Temporary private tmux shell: expect \(marker), then run tmux detach-client. Up to 4096 bytes are captured in a private test directory; do not type secrets or other commands.")
     fflush(stdout)
     let attach = Process()
@@ -53,8 +56,29 @@ if !selfCheck {
     attach.standardOutput = FileHandle.standardOutput
     attach.standardError = FileHandle.standardError
     try attach.run()
+    var attachReturned = false
+    defer {
+        if !attachReturned {
+            if attach.isRunning { attach.terminate() }
+            for _ in 0..<100 where attach.isRunning { Thread.sleep(forTimeInterval: 0.02) }
+            if attach.isRunning { _ = Darwin.kill(attach.processIdentifier, SIGKILL) }
+            for _ in 0..<100 where attach.isRunning { Thread.sleep(forTimeInterval: 0.02) }
+            if !attach.isRunning { attach.waitUntilExit() }
+            closed = (try? manager.close(ref)) != nil
+        }
+    }
+    let deadline = DispatchTime.now().uptimeNanoseconds + 10_000_000_000
+    while DispatchTime.now().uptimeNanoseconds < deadline && attach.isRunning {
+        if try manager.hasSingleAttachedClient(ref, expectedTTY: expectedTTY) {
+            viewClientObserved = true
+            break
+        }
+        Thread.sleep(forTimeInterval: 0.02)
+    }
+    guard viewClientObserved else { throw CheckFailure.failed }
     attach.waitUntilExit()
     guard attach.terminationStatus == 0 else { throw CheckFailure.failed }
+    attachReturned = true
 }
 
 let directories = try FileManager.default.contentsOfDirectory(atPath: root.path)
@@ -115,4 +139,4 @@ if selfCheck {
     }
 }
 print("private_owner=PASS capture_pipe_marker=PASS screen_metadata=PASS clean_fixture_close=PASS" +
-      (selfCheck ? "" : " attach_return=PASS"))
+      (selfCheck ? "" : " view_client=PASS attach_return=PASS"))
