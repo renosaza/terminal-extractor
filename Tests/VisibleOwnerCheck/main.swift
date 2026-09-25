@@ -13,7 +13,8 @@ guard selfCheck || (ProcessInfo.processInfo.environment["TMUX"] == nil && isatty
 
 func sameTerminal(_ choice: TerminalDiscovery.Choice) throws -> Bool {
     let matches = try TerminalDiscovery.list().filter { $0.tty == choice.tty }
-    return matches.count == 1 && matches[0] == choice
+    return matches.count == 1 && matches[0].appInstanceID == choice.appInstanceID &&
+        matches[0].windowID == choice.windowID
 }
 
 var terminalChoice: TerminalDiscovery.Choice?
