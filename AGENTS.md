@@ -1,7 +1,7 @@
 # Project working agreement
 
 Canonical repository: https://github.com/renosaza/terminal-extractor.
-Purpose: a local, text-first MCP bridge to visible Terminal.app and Ghostty sessions on macOS. This repository currently contains a proposed specification and backlog, not an implemented runtime.
+Purpose: a local, text-first MCP bridge to visible Terminal.app and Ghostty sessions on macOS. This repository contains a specification, backlog, feasibility probes and partial SwiftPM foundation; product terminal input, managed journal and complete runtime are not implemented.
 
 ## Before work
 
@@ -19,7 +19,7 @@ Use the repository-local project-docs-init, project-docs-migrate and project-doc
 
 The authoritative bans are [docs/constraints.md](docs/constraints.md). Every operation binds an explicit session and generation; current focus is not routing authority. Preserve distinctions between native/managed capture, command/process state, observed/inferred facts and complete/partial history. Do not weaken consent or claim lossless capture from periodic snapshots.
 
-There is no product runtime manifest or CI. Feasibility probe commands live in [local development](docs/guides/local-development.md); they do not build a product server. Add runtime commands only with the implementation that makes them real. Do not introduce infrastructure only to satisfy a template.
+There is a SwiftPM manifest and partial host/gateway, but no CI or complete product runtime. Feasibility probe commands live in [local development](docs/guides/local-development.md); they do not build a complete product server. Add runtime commands only with the implementation that makes them real. Do not introduce infrastructure only to satisfy a template.
 
 ## Durable knowledge
 

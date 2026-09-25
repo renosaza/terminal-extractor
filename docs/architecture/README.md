@@ -4,7 +4,7 @@ status: draft
 ---
 # Архитектура и стек
 
-Это проект архитектуры; из схемы ниже реализована только CLI foundation host/gateway с private Unix socket и локальными настройками, без session control. Требования: [PRD](../product/prd.md). Решение по стеку: [TE-ADR-002](decisions/TE-ADR-002-stack.md).
+Это проект архитектуры с частичной SwiftPM foundation: CLI host/gateway с private Unix socket и локальными настройками, private tmux owner с capture gate/sink и синтетическим shell fixture. Product recorder/journal, GUI view binding, consent-integrated input и session control отсутствуют. Требования: [PRD](../product/prd.md). Решение по стеку: [TE-ADR-002](decisions/TE-ADR-002-stack.md).
 
 ## Слои
 
@@ -41,7 +41,7 @@ MCP gateway не владеет shell-процессами. Managed pane при�
 | Managed terminal | tmux dedicated socket/config | Готовый PTY/screen backend; не реализуем свой эмулятор и не используем пользовательский tmux server |
 | Shell events | namespaced zsh integration | preexec/precmd + authenticated local events; не парсить prompt как доказательство |
 | Compression | deterministic local transforms; optional Headroom Python worker | Core независим от ML/Python; worker version pin и bounded IPC |
-| Tests | Swift Testing/XCTest + macOS integration fixtures | Выбор реальных команд после появления manifests; сейчас не установлено |
+| Tests | Swift Testing/XCTest + macOS integration fixtures | SwiftPM manifest и локальные fixture checks есть; CI и полная product suite ещё отсутствуют |
 
 Основания внешних возможностей: [S03–S09, S13](../research/sources.md). Конкретные patch versions, signing identity и Homebrew package name проекта пока не утверждены; не придумывать их в installer docs.
 

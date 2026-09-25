@@ -34,6 +34,8 @@ AX text API допускается как дополнительный read-only
 
 Backend ID: dedicated tmux namespace + pane ID + generation. Pipe/control stream читается от владельца PTY; нельзя читать `/dev/ttys...` в надежде получить копию уже выведенного текста. PTY slave не является журналом вывода.
 
+Локальный ручной fixture на Ghostty подтвердил, что выбранную существующую тестовую pane можно временно использовать как attach-client к **новой** private tmux session: после detach исходный shell сохранился; маркер был виден в tmux screen и дошёл до заранее включённого pipe. Это не ретроактивный захват исходного shell/scrollback и не product view binding. Первый живой запуск не подтвердил pipe marker, хотя маркер был виден; точная причина не установлена. См. [TE-T017](../work/tasks/TE-T017.md) и [TE-T018](../work/tasks/TE-T018.md).
+
 При запуске обеспечивается gate: recorder готов до exec shell. Первоначальная регистрация, geometry и первый snapshot согласуются по sequence/watermark; double counting импортированного scrollback исключается или помечается. Recorder restart создаёт новый capture_epoch и возможный gap, не фиктивную непрерывность.
 
 Screen использует tmux state. Сохранять rows/cols, cursor, alternate buffer, wrap flags и доступные attributes; если backend не даёт атрибут — unknown. Строить VT parser с нуля не требуется. Нормализатор journal не должен отвечать приложению на terminal queries; существует только один authoritative responder, иначе DSR/DA replies продублируются.
