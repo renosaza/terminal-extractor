@@ -11,6 +11,52 @@ guard selfCheck || (ProcessInfo.processInfo.environment["TMUX"] == nil && isatty
     throw CheckFailure.failed
 }
 
+func sameTerminal(_ choice: TerminalDiscovery.Choice) throws -> Bool {
+    let matches = try TerminalDiscovery.list().filter { $0.tty == choice.tty }
+    return matches.count == 1 && matches[0] == choice
+}
+
+var terminalChoice: TerminalDiscovery.Choice?
+if !selfCheck {
+    guard let tty = ttyname(STDIN_FILENO) else { throw CheckFailure.failed }
+    let expectedTTY = String(cString: tty)
+    let matches = try TerminalDiscovery.list().filter { $0.tty == expectedTTY }
+    guard matches.count == 1, let choice = matches.first else { throw CheckFailure.failed }
+    terminalChoice = choice
+    let nonce = UUID().uuidString
+    let helper = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathComponent()
+        .appendingPathComponent("termex-consent")
+    let process = Process()
+    process.executableURL = helper
+    let input = Pipe()
+    let output = Pipe()
+    process.standardInput = input
+    process.standardOutput = output
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+    let request = try JSONSerialization.data(withJSONObject: ["kind": "terminal_managed_new", "nonce": nonce])
+    input.fileHandleForWriting.write(request)
+    input.fileHandleForWriting.closeFile()
+    let deadline = DispatchTime.now().uptimeNanoseconds + 90_000_000_000
+    while process.isRunning && DispatchTime.now().uptimeNanoseconds < deadline {
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    if process.isRunning {
+        process.terminate()
+        for _ in 0..<100 where process.isRunning { Thread.sleep(forTimeInterval: 0.02) }
+        if process.isRunning { _ = Darwin.kill(process.processIdentifier, SIGKILL) }
+    }
+    process.waitUntilExit()
+    let data = output.fileHandleForReading.readDataToEndOfFile()
+    guard process.terminationStatus == 0, data.count <= 4096,
+          let reply = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+          Set(reply.keys) == ["kind", "confirmed", "nonce"],
+          reply["kind"] as? String == "terminal_managed_new",
+          reply["confirmed"] as? Bool == true,
+          reply["nonce"] as? String == nonce else { throw CheckFailure.failed }
+    guard try sameTerminal(choice) else { throw CheckFailure.failed }
+}
+
 let root = URL(fileURLWithPath: "/tmp").appendingPathComponent("te-visible-owner-\(UUID().uuidString)")
 try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false,
                                         attributes: [.posixPermissions: 0o700])
@@ -37,6 +83,9 @@ let sink = URL(fileURLWithPath: CommandLine.arguments[0]).deletingLastPathCompon
     .appendingPathComponent("termex-capture-sink")
 let gate = try manager.armCapture(ref, sinkExecutable: sink, maxBytes: 4096)
 let marker = "TE_OWNER_VISIBLE_OK"
+if let choice = terminalChoice {
+    guard try sameTerminal(choice) else { throw CheckFailure.failed }
+}
 let binding = try manager.launchCapturedProcess(ref, gate: gate,
     executableURL: URL(fileURLWithPath: "/bin/sh"),
     arguments: ["-c", "printf '\(marker)\\n'; exec /bin/zsh -f -i"])
