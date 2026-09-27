@@ -3,6 +3,11 @@ import Foundation
 public struct SessionRef: Hashable, Sendable {
     public let id: UUID
     public let generation: UInt64
+
+    public init(id: UUID, generation: UInt64) {
+        self.id = id
+        self.generation = generation
+    }
 }
 
 public struct GhosttyTarget: Hashable, Sendable {

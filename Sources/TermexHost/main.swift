@@ -86,7 +86,7 @@ let config = try LocalConfig.load(at: configURL, requireExisting: explicitConfig
             do {
                 guard config.allowedApps.contains(.ghostty) else { throw ConsentFlow.Failure.noChoices }
                 let expectedEpoch = grants.currentEpoch()
-                if let approved = try consent.request(stopping: stopping) {
+                if let approved = try consent.request(stopping: { stopping() || grants.currentEpoch() != expectedEpoch }) {
                     guard !stopping() else { throw ConsentFlow.Failure.stopped }
                     if let grant = grants.allow(approved, connection: connectionID, expectedEpoch: expectedEpoch) {
                         response = ["status": "approved", "session_id": approved.session.id.uuidString,
