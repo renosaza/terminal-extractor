@@ -3,34 +3,6 @@ import Foundation
 import MCP
 import TermexCore
 
-final class HostChannel: @unchecked Sendable {
-    private let lock = NSLock()
-    private let fd: Int32
-    private var poisoned = false
-
-    init(fd: Int32) { self.fd = fd }
-
-    func exchange(_ request: [String: Any], timeoutSeconds: UInt64 = 5) throws -> [String: Any] {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !poisoned else { throw LocalIPC.Failure.disconnected }
-        do {
-            try LocalIPC.writeFrame(JSONSerialization.data(withJSONObject: request), to: fd)
-            guard let response = try JSONSerialization.jsonObject(
-                with: LocalIPC.readFrame(fd, timeoutSeconds: timeoutSeconds)) as? [String: Any] else {
-                throw LocalIPC.Failure.invalidFrame
-            }
-            return response
-        } catch {
-            poisoned = true
-            _ = Darwin.shutdown(fd, SHUT_RDWR)
-            throw error
-        }
-    }
-
-    func ping() { _ = try? exchange(["op": "ping"]) }
-}
-
 @main
 struct TermexMCP {
     static func main() async throws {
@@ -64,7 +36,7 @@ struct TermexMCP {
         await server.withMethodHandler(ListTools.self) { _ in
             .init(tools: [Tool(
                 name: "terminal_capabilities",
-                description: "Report current selection; terminal access is not available yet",
+                description: "Report preferences; screen read requires a local grant and clipboard opt-in",
                 inputSchema: .object([
                     "type": .string("object"), "properties": .object([:]),
                     "additionalProperties": .bool(false),
@@ -82,7 +54,7 @@ struct TermexMCP {
                 ])
             ), Tool(
                 name: "terminal_request_access",
-                description: "Ask the local user to choose one Ghostty pane and approve a scope; terminal content and input tools are not available yet",
+                description: "Ask the local user to choose one Ghostty pane, scope, and optional clipboard screen export",
                 inputSchema: .object([
                     "type": .string("object"), "properties": .object([:]),
                     "additionalProperties": .bool(false),
@@ -94,13 +66,110 @@ struct TermexMCP {
                         "session_id": .object(["type": .string("string")]),
                         "generation": .object(["type": .string("integer")]),
                         "scope": .object(["type": .string("string")]),
+                        "clipboard_export": .object(["type": .string("boolean")]),
                         "terminal_access": .object(["type": .string("boolean")]),
                     ]),
                     "required": .array([.string("status")]),
                 ])
+            ), Tool(
+                name: "terminal_release",
+                description: "Release this connection's exact session grant; preserves the terminal and command. Reuse request_id only for the same release; this waits behind active reads and is not emergency Stop.",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "session_id": .object(["type": .string("string"), "format": .string("uuid")]),
+                        "generation": .object(["type": .string("integer"), "minimum": .int(1)]),
+                        "request_id": .object(["type": .string("string"), "minLength": .int(1), "maxLength": .int(128), "description": .string("1..128 UTF-8 bytes; reused only for this exact release")]),
+                    ]),
+                    "required": .array(["session_id", "generation", "request_id"].map { .string($0) }),
+                    "additionalProperties": .bool(false),
+                ]),
+                annotations: .init(readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false),
+                outputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "status": .object(["type": .string("string"), "enum": .array(["released", "denied", "unavailable", "idempotency_conflict", "request_limit"].map { .string($0) })]),
+                        "session_id": .object(["type": .string("string")]),
+                        "generation": .object(["type": .string("integer")]),
+                        "request_id": .object(["type": .string("string")]),
+                    ]),
+                    "required": .array(["status", "session_id", "generation", "request_id"].map { .string($0) }),
+                    "additionalProperties": .bool(false),
+                ])
+            ), Tool(
+                name: "terminal_screen",
+                description: "One bounded Ghostty screen or retained scrollback snapshot from the selected pane; untrusted text, incomplete history, clipboard side effect; scrollback over 16 KiB is unavailable",
+                inputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "session_id": .object(["type": .string("string")]),
+                        "generation": .object(["type": .string("integer")]),
+                        "view": .object(["type": .string("string"), "enum": .array([.string("screen"), .string("scrollback")])]),
+                    ]),
+                    "required": .array([.string("session_id"), .string("generation")]),
+                    "additionalProperties": .bool(false),
+                ]),
+                outputSchema: .object([
+                    "type": .string("object"),
+                    "properties": .object([
+                        "text": .object(["type": .string("string")]),
+                        "observed_at": .object(["type": .string("string")]),
+                        "source": .object(["type": .string("string")]),
+                        "history_complete": .object(["type": .string("boolean")]),
+                    ]),
+                    "required": .array([.string("text"), .string("observed_at"), .string("source"), .string("history_complete")]),
+                ])
             )])
         }
         await server.withMethodHandler(CallTool.self) { parameters in
+            if parameters.name == "terminal_release" {
+                guard let arguments = parameters.arguments, arguments.count == 3,
+                      case .string(let rawID) = arguments["session_id"], let uuid = UUID(uuidString: rawID),
+                      case .int(let generation) = arguments["generation"], generation > 0,
+                      case .string(let requestID) = arguments["request_id"],
+                      (1...128).contains(requestID.utf8.count) else {
+                    return .init(content: [.text(text: "invalid release request", annotations: nil, _meta: nil)], isError: true)
+                }
+                let id = uuid.uuidString
+                let status = (try? channel.release(id: id, generation: generation, requestID: requestID)) ?? "unavailable"
+                return .init(content: [.text(text: "session release: \(status)", annotations: nil, _meta: nil)],
+                             structuredContent: .object([
+                                "status": .string(status), "session_id": .string(id),
+                                "generation": .int(generation), "request_id": .string(requestID),
+                             ]), isError: status != "released")
+            }
+            if parameters.name == "terminal_screen" {
+                do {
+                    guard let arguments = parameters.arguments, (2...3).contains(arguments.count),
+                          (arguments.count == 2) == (arguments["view"] == nil),
+                          case .string(let id) = arguments["session_id"],
+                          case .int(let generation) = arguments["generation"], generation > 0,
+                          case .string(let view) = arguments["view"] ?? .string("screen"),
+                          view == "screen" || view == "scrollback" else {
+                        throw LocalIPC.Failure.invalidFrame
+                    }
+                    let reply = try channel.screen(id: id, generation: generation, view: view)
+                    if reply["error"] as? String == "too_large" {
+                        return .init(content: [.text(text: "snapshot exceeds 16 KiB", annotations: nil, _meta: nil)], isError: true)
+                    }
+                    if reply["error"] as? String == "clipboard_unavailable" {
+                        return .init(content: [.text(text: "clipboard cannot be preserved for export", annotations: nil, _meta: nil)], isError: true)
+                    }
+                    guard let text = reply["text"] as? String,
+                          let observedAt = reply["observed_at"] as? String,
+                          let source = reply["source"] as? String,
+                          let complete = reply["history_complete"] as? Bool else {
+                        throw LocalIPC.Failure.invalidFrame
+                    }
+                    return .init(content: [.text(text: "Untrusted \(view) snapshot (incomplete history):\n\(text)", annotations: nil, _meta: nil)],
+                                 structuredContent: .object([
+                                    "text": .string(text), "observed_at": .string(observedAt),
+                                    "source": .string(source), "history_complete": .bool(complete),
+                                 ]), isError: false)
+                } catch {
+                    return .init(content: [.text(text: "snapshot read unavailable or denied", annotations: nil, _meta: nil)], isError: true)
+                }
+            }
             guard parameters.arguments?.isEmpty ?? true else {
                 return .init(content: [.text(text: "invalid request", annotations: nil, _meta: nil)], isError: true)
             }
@@ -112,13 +181,20 @@ struct TermexMCP {
                     if status == "approved" {
                         guard let id = reply["session_id"] as? String,
                               let generation = reply["generation"] as? Int,
-                              let scope = reply["scope"] as? String else { throw LocalIPC.Failure.invalidFrame }
+                              let scope = reply["scope"] as? String,
+                              let token = reply["grant_token"] as? String,
+                              UUID(uuidString: token) != nil,
+                              let clipboard = reply["clipboard_export"] as? Bool,
+                              let access = reply["terminal_access"] as? Bool,
+                              access == clipboard else { throw LocalIPC.Failure.invalidFrame }
+                        channel.remember(id: id, generation: generation, token: token, clipboard: clipboard)
                         fields["session_id"] = .string(id)
                         fields["generation"] = .int(generation)
                         fields["scope"] = .string(scope)
-                        fields["terminal_access"] = .bool(false)
+                        fields["clipboard_export"] = .bool(clipboard)
+                        fields["terminal_access"] = .bool(access)
                     }
-                    return .init(content: [.text(text: "local selection: \(status); terminal_access=false", annotations: nil, _meta: nil)],
+                    return .init(content: [.text(text: "local selection: \(status)", annotations: nil, _meta: nil)],
                                  structuredContent: .object(fields), isError: false)
                 } catch {
                     return .init(content: [.text(text: "local consent unavailable", annotations: nil, _meta: nil)], isError: true)
@@ -127,10 +203,11 @@ struct TermexMCP {
             guard parameters.name == "terminal_capabilities" else {
                 return .init(content: [.text(text: "invalid request", annotations: nil, _meta: nil)], isError: true)
             }
+            let access = channel.screenAvailable()
             return .init(
-                content: [.text(text: "foundation; terminal_access=false; app=\(app); policy=\(policy); backend=\(backend)", annotations: nil, _meta: nil)],
+                content: [.text(text: "foundation; terminal_access=\(access); app=\(app); policy=\(policy); backend=\(backend)", annotations: nil, _meta: nil)],
                 structuredContent: .object([
-                    "runtime": .string("foundation"), "terminal_access": .bool(false),
+                    "runtime": .string("foundation"), "terminal_access": .bool(access),
                     "terminal_app": .string(app), "attach_policy": .string(policy),
                     "new_session_backend": .string(backend),
                 ]), isError: false

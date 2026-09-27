@@ -86,13 +86,15 @@ let config = try LocalConfig.load(at: configURL, requireExisting: explicitConfig
             do {
                 guard config.allowedApps.contains(.ghostty) else { throw ConsentFlow.Failure.noChoices }
                 let expectedEpoch = grants.currentEpoch()
-                if let approved = try consent.request(stopping: stopping) {
+                if let approved = try consent.request(stopping: stopping,
+                                                       clipboardExportAvailable: config.nativeGhosttyClipboardExport) {
                     guard !stopping() else { throw ConsentFlow.Failure.stopped }
                     if let grant = grants.allow(approved, connection: connectionID, expectedEpoch: expectedEpoch) {
                         response = ["status": "approved", "session_id": approved.session.id.uuidString,
                                     "generation": approved.session.generation,
                                     "scope": approved.scope.rawValue, "grant_token": grant.token.uuidString,
-                                    "terminal_access": false]
+                                    "clipboard_export": approved.clipboardExport,
+                                    "terminal_access": approved.clipboardExport]
                     } else { response = ["status": "revoked_or_writer_busy"] }
                 } else { response = ["status": "cancelled"] }
             } catch ConsentFlow.Failure.busy { response = ["status": "busy"] }
@@ -102,6 +104,71 @@ let config = try LocalConfig.load(at: configURL, requireExisting: explicitConfig
         case "access_status":
             guard request.count == 1 else { throw LocalIPC.Failure.invalidFrame }
             let response = try JSONSerialization.data(withJSONObject: ["sessions": grants.list(connection: connectionID)])
+            try LocalIPC.writeFrame(response, to: client)
+        case "release_session":
+            guard request.count == 4,
+                  let idText = request["session_id"] as? String, let id = UUID(uuidString: idText),
+                  let number = request["generation"] as? NSNumber,
+                  CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  !["f", "d"].contains(String(cString: number.objCType)),
+                  let generation = request["generation"] as? Int, generation > 0,
+                  let tokenText = request["grant_token"] as? String,
+                  let token = UUID(uuidString: tokenText) else { throw LocalIPC.Failure.invalidFrame }
+            let released = grants.release(connection: connectionID,
+                                          session: SessionRef(id: id, generation: UInt64(generation)), token: token)
+            try LocalIPC.writeFrame(JSONSerialization.data(withJSONObject: ["released": released]), to: client)
+        case "read_ghostty_screen":
+            guard request.count == 4 || request.count == 5,
+                  let idText = request["session_id"] as? String, let id = UUID(uuidString: idText),
+                  let number = request["generation"] as? NSNumber,
+                  CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  !["f", "d"].contains(String(cString: number.objCType)),
+                  let generation = request["generation"] as? Int, generation > 0,
+                  let tokenText = request["grant_token"] as? String,
+                  let token = UUID(uuidString: tokenText),
+                  let viewText = request.count == 4 ? "screen" : request["view"] as? String,
+                  let view = GhosttyScreenExport.View(rawValue: viewText) else { throw LocalIPC.Failure.invalidFrame }
+            let session = SessionRef(id: id, generation: UInt64(generation))
+            guard let gateway = Bundle.main.executableURL?.deletingLastPathComponent()
+                .appendingPathComponent("termex-mcp").path else { throw LocalIPC.Failure.unauthorizedPeer }
+            try LocalIPC.verifyExecutable(client, expectedPath: gateway)
+            guard config.nativeGhosttyClipboardExport,
+                  grants.check(connection: connectionID, session: session, token: token,
+                               scope: .read, clipboardExport: true) else {
+                throw LocalIPC.Failure.unauthorizedPeer
+            }
+            let target = try consent.revalidate(session)
+            let snapshot: GhosttyScreenExport.Snapshot
+            do {
+                snapshot = try GhosttyScreenExport.read(target, view: view) {
+                    grants.check(connection: connectionID, session: session, token: token,
+                                 scope: .read, clipboardExport: true)
+                }
+            } catch {
+                let reason: String
+                switch error {
+                case GhosttyExportFile.Failure.tooLarge: reason = "too_large"
+                case GhosttyScreenExport.Failure.clipboardUnavailable: reason = "clipboard_unavailable"
+                default: throw error
+                }
+                guard grants.check(connection: connectionID, session: session, token: token,
+                                   scope: .read, clipboardExport: true),
+                      try consent.revalidate(session) == target else {
+                    throw LocalIPC.Failure.unauthorizedPeer
+                }
+                try LocalIPC.writeFrame(JSONSerialization.data(withJSONObject: ["error": reason]), to: client)
+                return true
+            }
+            guard grants.check(connection: connectionID, session: session, token: token,
+                               scope: .read, clipboardExport: true),
+                  try consent.revalidate(session) == target else {
+                throw LocalIPC.Failure.unauthorizedPeer
+            }
+            let response = try JSONSerialization.data(withJSONObject: [
+                "text": snapshot.text, "observed_at": ISO8601DateFormatter().string(from: snapshot.observedAt),
+                "source": view == .screen ? "ghostty_screen_snapshot" : "ghostty_scrollback_snapshot",
+                "history_complete": false,
+            ])
             try LocalIPC.writeFrame(response, to: client)
         default:
             throw LocalIPC.Failure.invalidFrame
@@ -123,12 +190,13 @@ defer { Darwin.close(stopListener); unlink(stopPath) }
 signal(SIGINT, SIG_IGN)
 signal(SIGTERM, SIG_IGN)
 let stopping = DispatchSemaphore(value: 0)
-let stop = [SIGINT, SIGTERM].map { value in
+nonisolated func installStopSignal(_ value: Int32, stopping: DispatchSemaphore) -> any DispatchSourceSignal {
     let source = DispatchSource.makeSignalSource(signal: value, queue: .global())
     source.setEventHandler { stopping.signal() }
     source.resume()
     return source
 }
+let stop = [SIGINT, SIGTERM].map { installStopSignal($0, stopping: stopping) }
 _ = stop
 fputs("termex-host ready\n", stderr)
 
@@ -174,6 +242,13 @@ final class ClientPool: @unchecked Sendable {
         for fd in clients.keys { _ = Darwin.shutdown(fd, SHUT_RDWR) }
     }
 
+    func revokeAndDisconnect() -> UInt64 {
+        lock.lock()
+        defer { lock.unlock() }
+        for fd in clients.keys { _ = Darwin.shutdown(fd, SHUT_RDWR) }
+        return grants.revokeAll()
+    }
+
     func wait() { _ = group.wait(timeout: .now() + 5) }
 }
 
@@ -190,7 +265,7 @@ while stopping.wait(timeout: .now()) == .timedOut {
     if pending[0].revents & Int16(POLLIN) != 0 {
         do {
             let client = try LocalIPC.accept(stopListener)
-            let epoch = grants.revokeAll()
+            let epoch = pool.revokeAndDisconnect()
             try? LocalIPC.writeFrame(try JSONSerialization.data(withJSONObject: ["stopped": true, "epoch": epoch]), to: client)
             Darwin.close(client)
         } catch LocalIPC.Failure.unauthorizedPeer { continue }

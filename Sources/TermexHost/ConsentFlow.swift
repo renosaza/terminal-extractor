@@ -6,6 +6,7 @@ enum ConsentScope: String { case read, control }
 struct ConsentResult {
     let session: SessionRef
     let scope: ConsentScope
+    let clipboardExport: Bool
 }
 
 final class ConnectionGrants: @unchecked Sendable {
@@ -38,12 +39,24 @@ final class ConnectionGrants: @unchecked Sendable {
         return grant
     }
 
-    func check(connection: UUID, session: SessionRef, token: UUID, scope: ConsentScope) -> Bool {
+    func check(connection: UUID, session: SessionRef, token: UUID, scope: ConsentScope,
+               clipboardExport: Bool = false) -> Bool {
         lock.lock()
         defer { lock.unlock() }
         guard let grant = entries[connection]?[session.id], grant.token == token,
               grant.epoch == epoch, grant.result.session == session else { return false }
-        return grant.result.scope == .control || scope == .read
+        return (grant.result.scope == .control || scope == .read) &&
+            (!clipboardExport || grant.result.clipboardExport)
+    }
+
+    func release(connection: UUID, session: SessionRef, token: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let grant = entries[connection]?[session.id], grant.result.session == session,
+              grant.token == token, grant.epoch == epoch else { return false }
+        entries[connection]?.removeValue(forKey: session.id)
+        if writers[session.id] == connection { writers.removeValue(forKey: session.id) }
+        return true
     }
 
     func revokeAll() -> UInt64 {
@@ -61,7 +74,8 @@ final class ConnectionGrants: @unchecked Sendable {
         lock.unlock()
         return values.map { ["session_id": $0.result.session.id.uuidString,
                              "generation": $0.result.session.generation,
-                             "scope": $0.result.scope.rawValue] }
+                             "scope": $0.result.scope.rawValue,
+                             "clipboard_export": $0.result.clipboardExport] }
     }
 
     func remove(connection: UUID) {
@@ -102,7 +116,7 @@ final class ConsentFlow: @unchecked Sendable {
         return "W \(clean(choice.windowID, max: 24)) · T \(clean(choice.tabID, max: 24)) · S \(clean(choice.surfaceID, max: 36)) — \(clean(choice.windowName, max: 24)) / \(clean(choice.tabName, max: 24)) / \(clean(choice.surfaceName, max: 24))"
     }
 
-    func request(stopping: @Sendable () -> Bool) throws -> ConsentResult? {
+    func request(stopping: @Sendable () -> Bool, clipboardExportAvailable: Bool) throws -> ConsentResult? {
         guard enter() else { throw Failure.busy }
         defer { leave() }
         let deadline = DispatchTime.now().uptimeNanoseconds + 90_000_000_000
@@ -119,6 +133,7 @@ final class ConsentFlow: @unchecked Sendable {
         let request = try JSONSerialization.data(withJSONObject: [
             "title": "Select one Ghostty session for the requesting local client",
             "choices": rows,
+            "clipboard_export_available": clipboardExportAvailable,
         ])
         guard request.count <= 64 * 1024,
               let directory = Bundle.main.executableURL?.deletingLastPathComponent() else {
@@ -150,11 +165,18 @@ final class ConsentFlow: @unchecked Sendable {
             throw Failure.invalidReply
         }
         if reply["cancelled"] as? Bool == true { return nil }
-        guard reply.count == 2, let text = reply["handle"] as? String,
+        guard reply.count == 3, let text = reply["handle"] as? String,
               let handle = UUID(uuidString: text), handles.contains(handle),
               let scopeText = reply["scope"] as? String,
-              let scope = ConsentScope(rawValue: scopeText) else { throw Failure.invalidReply }
+              let scope = ConsentScope(rawValue: scopeText),
+              scope == .read,
+              let clipboardExport = reply["clipboard_export"] as? Bool,
+              !clipboardExport || clipboardExportAvailable else { throw Failure.invalidReply }
         let session = try registry.bindApproved(handle)
-        return ConsentResult(session: session, scope: scope)
+        return ConsentResult(session: session, scope: scope, clipboardExport: clipboardExport)
+    }
+
+    func revalidate(_ session: SessionRef) throws -> GhosttyTarget {
+        try registry.revalidate(session)
     }
 }

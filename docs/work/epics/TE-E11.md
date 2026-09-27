@@ -24,3 +24,5 @@ TE-C01..09; только безопасные тестовые сессии. С�
 [TE-T041](../tasks/TE-T041.md), [TE-T042](../tasks/TE-T042.md), [TE-T043](../tasks/TE-T043.md), [TE-T044](../tasks/TE-T044.md).
 
 [Приёмка](../../guides/acceptance.md).
+
+Ранние synthetic checks и три живых Ghostty screen reads дают частное evidence для TE-T015, но fixture corpus и интегрированный GUI gate ещё не созданы. Живой scrollback после согласия не вернул export path даже после `seq 1 200`; Stop одновременно с реальным export не проверен. Поэтому TE-T041..044 и эпик остаются `backlog`, без переноса этих сценариев в PASS.

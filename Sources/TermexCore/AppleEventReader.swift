@@ -78,6 +78,23 @@ struct AppleEventReader {
         return value
     }
 
+    func performAction(_ action: String, on terminal: NSAppleEventDescriptor) throws -> Bool {
+        let event = NSAppleEventDescriptor(eventClass: Self.code("Ghst"), eventID: Self.code("PfAc"),
+                                           targetDescriptor: NSAppleEventDescriptor(processIdentifier: pid),
+                                           returnID: AEReturnID(kAutoGenerateReturnID),
+                                           transactionID: AETransactionID(kAnyTransactionID))
+        event.setParam(NSAppleEventDescriptor(string: action), forKeyword: keyDirectObject)
+        event.setParam(terminal, forKeyword: Self.code("GonT"))
+        let reply: NSAppleEventDescriptor
+        do { reply = try event.sendEvent(options: [.waitForReply], timeout: 5) }
+        catch { throw Failure.unavailable }
+        guard reply.paramDescriptor(forKeyword: keyErrorNumber) == nil,
+              let result = reply.paramDescriptor(forKeyword: keyDirectObject) else {
+            throw Failure.unavailable
+        }
+        return result.booleanValue
+    }
+
     func items(_ descriptor: NSAppleEventDescriptor) throws -> [NSAppleEventDescriptor] {
         guard descriptor.descriptorType == typeAEList,
               descriptor.numberOfItems >= 0, descriptor.numberOfItems <= 256 else {

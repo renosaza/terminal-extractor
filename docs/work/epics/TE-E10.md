@@ -2,7 +2,7 @@
 id: TE-E10
 type: epic
 status: draft
-task_status: doing
+task_status: active
 scope: safety-and-recovery
 ---
 # Локальное согласие, Stop и защита данных
@@ -25,4 +25,4 @@ TE-C03..07, TE-C09. Не обещать sandbox или автоматическ�
 
 [Security design](../../architecture/security.md).
 
-Промежуточный локальный Stop и grant epoch реализованы в [TE-T038](../tasks/TE-T038.md). Menu-bar UI, privacy mode и безопасный read dispatch ещё не реализованы.
+Промежуточный локальный Stop и grant epoch реализованы в [TE-T038](../tasks/TE-T038.md). Синтетическая проверка подтвердила отзыв при блокированном export action и прекращение обмена через текущие client sockets. В живом screen request Stop подтвердился после создания файла экспорта и до ответа MCP; текст не выдан. Пересечение с ещё выполняющимся Apple Event не доказано. Menu-bar UI и privacy mode отсутствуют; bounded Ghostty screen read существует только с отдельным локальным согласием.

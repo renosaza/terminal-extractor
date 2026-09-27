@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 public enum GhosttyDiscovery {
@@ -46,5 +47,27 @@ public enum GhosttyDiscovery {
                 $0.tabID == tabID && $0.surfaceID == surfaceID
         }) else { throw Failure.notFound }
         return choice
+    }
+
+    static func export(_ target: GhosttyTarget, view: GhosttyScreenExport.View) throws {
+        guard let reader = try AppleEventReader(bundleID: "com.mitchellh.ghostty"),
+              reader.instanceID == target.appInstanceID else { throw Failure.notFound }
+        var matches: [NSAppleEventDescriptor] = []
+        for window in try reader.items(reader.get(reader.all("Gwnd")))
+        where try reader.text("ID  ", of: window) == target.windowID {
+            for tab in try reader.items(reader.get(reader.all("Gtab", in: window)))
+            where try reader.text("ID  ", of: tab) == target.tabID {
+                for surface in try reader.items(reader.get(reader.all("Gtrm", in: tab)))
+                where try reader.text("ID  ", of: surface) == target.surfaceID {
+                    matches.append(surface)
+                }
+            }
+        }
+        guard matches.count == 1 else { throw Failure.notFound }
+        try reader.checkInstance()
+        guard try reader.performAction(view.action, on: matches[0]) else {
+            throw Failure.notFound
+        }
+        try reader.checkInstance()
     }
 }
