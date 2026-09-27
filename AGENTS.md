@@ -24,3 +24,8 @@ There is no product runtime manifest or CI. Feasibility probe commands live in [
 ## Durable knowledge
 
 `docs/` follows OKF v0.2; AGENTS.md and skills remain outside it. Local task cards are the sole tracker. Update related cards, links and ADRs with implementation evidence. Before `done`, record actual result, checks and checked revision. Keep proposed design separate from existing behavior. Publish changes through a reviewable branch; do not merge, rewrite history or change global settings as a side effect of documentation work.
+## Shared execution policy
+
+Use Ponytail full and the shortest stable path. Preserve validation, security, error handling, accessibility and data-loss protection; avoid speculative services, frameworks and enterprise-style gates. For work beyond a tiny, obvious, low-risk change, the primary model plans, delegates bounded independent tasks and integrates the result. Use GPT-6 Luna for information searches with effort matched to the question, and up to max effort for small utility code or repetitive edits. Use GPT-6 Sol low for medium work, medium for harder work and substantive review, and high for complex work. Route by risk, not diff size; escalate when needed. Give each worker one owner, a clear scope and a checkable result. Preserve this repository's stricter review and operational gates.
+
+Run the smallest meaningful check for each concrete risk; a later check that already proves an earlier step worked makes the earlier check unnecessary. Stop once the result is established. While GitHub CI runs, use a blocking watch or one GPT-6 Luna low-effort checker and resume on completion or actionable failure, rather than repeatedly polling unchanged status.
