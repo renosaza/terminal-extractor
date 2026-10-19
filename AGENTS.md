@@ -9,7 +9,7 @@ Read active [constraints](docs/constraints.md), then use [the knowledge index](d
 
 ## Execution
 
-Follow applicable global orchestration rules. Astra/Sol sessions delegate bounded research and implementation when real worker tools exist; Terra/Luna workers execute their assigned scope without recursive delegation. One writer per file. Never invent a worker, review, running model ID or tool result. Report unavailable orchestration/skills and follow higher-priority session instructions; do not represent direct execution as delegated review.
+Follow applicable global orchestration rules. The primary model delegates substantive work to Sol workers; independent Sol medium/high reviewers review, and Luna at minimum supported effort only performs mechanical status checks and waits. Workers execute their assigned scope directly. One writer per file. Never invent a worker, review, running model ID or tool result. Report unavailable orchestration/skills and follow higher-priority session instructions; do not represent direct execution as delegated review.
 
 Use ponytail-chatgpt in full mode when actually available, unless the user requests `/ponytail off`. Its absence is a reported limitation, not permission to simulate it.
 
